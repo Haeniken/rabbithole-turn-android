@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+  ~ Copyright © 2017-2025 WireGuard LLC. All Rights Reserved.
+  ~ SPDX-License-Identifier: Apache-2.0
+  -->
+<resources xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <style name="WireGuardTheme.Toolbar" parent="Widget.Material3.Toolbar">
+        <item name="android:background">?attr/colorSurface</item>
+    </style>
+
+    <style name="AppThemeBase" parent="WireGuardTheme">
+        <item name="materialCardViewStyle">@style/WireGuardTheme.MaterialCardView</item>
+        <item name="toolbarStyle">@style/WireGuardTheme.Toolbar</item>
+        <item name="bottomSheetDialogTheme">@style/WireGuardTheme.BottomSheetDialog</item>
+        <item name="android:statusBarColor">?android:colorBackground</item>
+        <item name="android:windowLightStatusBar">@bool/light_status_bar</item>
+    </style>
+
+    <!-- Various additional API-specific features in values-v*/styles.xml -->
+    <style name="AppTheme" parent="AppThemeBase" />
+
+    <style name="RabbitMainTheme" parent="AppTheme">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:statusBarColor">@color/rabbit_main_status</item>
+        <item name="android:navigationBarColor">@color/rabbit_main_navigation</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:textColorPrimary">@color/rabbit_text_primary</item>
+        <item name="android:textColorSecondary">@color/rabbit_text_secondary</item>
+        <item name="colorPrimary">@color/rabbit_accent_soft</item>
+        <item name="colorOnPrimary">@color/rabbit_main_navigation</item>
+        <item name="colorSecondary">@color/rabbit_accent</item>
+        <item name="colorOnSecondary">@color/rabbit_text_primary</item>
+        <item name="colorSurface">@color/rabbit_card</item>
+        <item name="colorOnSurface">@color/rabbit_text_primary</item>
+        <item name="colorSurfaceVariant">@color/rabbit_surface_high</item>
+        <item name="colorOnSurfaceVariant">@color/rabbit_text_secondary</item>
+        <item name="colorOutline">@color/rabbit_outline_bright</item>
+        <item name="materialAlertDialogTheme">@style/RabbitAlertDialogTheme</item>
+        <item name="popupMenuStyle">@style/RabbitPopupMenu</item>
+        <item name="materialCardViewStyle">@style/RabbitMaterialCard</item>
+    </style>
+
+    <style name="RabbitScreenThemeBase" parent="AppTheme">
+        <item name="android:colorBackground">@color/rabbit_main_navigation</item>
+        <item name="android:windowBackground">@drawable/rabbit_main_background</item>
+        <item name="android:navigationBarColor">@color/rabbit_main_navigation</item>
+        <item name="android:statusBarColor">@color/rabbit_main_status</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:textColorPrimary">@color/rabbit_text_primary</item>
+        <item name="android:textColorSecondary">@color/rabbit_text_secondary</item>
+        <item name="android:colorAccent">@color/rabbit_accent_soft</item>
+        <item name="android:colorControlNormal">@color/rabbit_accent_soft</item>
+        <item name="android:colorControlActivated">@color/rabbit_accent_soft</item>
+        <item name="colorOnBackground">@color/rabbit_text_primary</item>
+        <item name="colorOnSurface">@color/rabbit_text_primary</item>
+        <item name="colorOnSurfaceVariant">@color/rabbit_text_secondary</item>
+        <item name="colorPrimary">@color/rabbit_accent_soft</item>
+        <item name="colorOnPrimary">@color/rabbit_main_navigation</item>
+        <item name="colorPrimaryContainer">@color/rabbit_surface_high</item>
+        <item name="colorOnPrimaryContainer">@color/rabbit_text_primary</item>
+        <item name="colorSecondary">@color/rabbit_accent</item>
+        <item name="colorOnSecondary">@color/rabbit_text_primary</item>
+        <item name="colorSecondaryContainer">@color/rabbit_surface_high</item>
+        <item name="colorOnSecondaryContainer">@color/rabbit_text_primary</item>
+        <item name="colorSurface">@color/rabbit_card</item>
+        <item name="colorSurfaceVariant">@color/rabbit_surface_high</item>
+        <item name="colorOutline">@color/rabbit_outline_bright</item>
+        <item name="actionBarStyle">@style/RabbitActionBar</item>
+        <item name="materialAlertDialogTheme">@style/RabbitAlertDialogTheme</item>
+        <item name="materialButtonStyle">@style/RabbitButton</item>
+        <item name="materialCardViewStyle">@style/RabbitMaterialCard</item>
+        <item name="popupMenuStyle">@style/RabbitPopupMenu</item>
+        <item name="textInputStyle">@style/RabbitTextInput</item>
+    </style>
+
+    <style name="RabbitScreenTheme" parent="RabbitScreenThemeBase" />
+
+    <style name="RabbitLogTheme" parent="RabbitScreenTheme" />
+
+    <style name="RabbitActionBar">
+        <item name="background">@drawable/rabbit_actionbar_background</item>
+        <item name="elevation">0dp</item>
+        <item name="iconTint">@color/rabbit_accent_soft</item>
+        <item name="actionMenuTextColor">@color/rabbit_accent_soft</item>
+        <item name="titleTextStyle">@style/RabbitActionBarTitle</item>
+    </style>
+
+    <style name="RabbitActionBarTitle" parent="TextAppearance.AppCompat.Widget.ActionBar.Title">
+        <item name="android:textColor">@color/rabbit_text_primary</item>
+        <item name="android:textSize">20sp</item>
+    </style>
+
+    <style name="RabbitLogFilterButton" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:minHeight">32dp</item>
+        <item name="android:paddingLeft">10dp</item>
+        <item name="android:paddingRight">10dp</item>
+        <item name="android:paddingTop">3dp</item>
+        <item name="android:paddingBottom">3dp</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:textColor">@color/rabbit_log_filter_text</item>
+        <item name="backgroundTint">@color/rabbit_log_filter_background</item>
+        <item name="strokeColor">@color/rabbit_outline</item>
+    </style>
+
+    <style name="RabbitMaterialCard" parent="Widget.Material3.CardView.Filled">
+        <item name="cardBackgroundColor">@color/rabbit_surface</item>
+        <item name="cardCornerRadius">18dp</item>
+        <item name="cardElevation">0dp</item>
+        <item name="contentPadding">8dp</item>
+        <item name="strokeColor">@color/rabbit_outline</item>
+        <item name="strokeWidth">0.75dp</item>
+    </style>
+
+    <style name="RabbitButton" parent="Widget.Material3.Button">
+        <item name="android:minHeight">46dp</item>
+        <item name="android:textColor">@color/rabbit_text_primary</item>
+        <item name="backgroundTint">@color/rabbit_button_tint</item>
+        <item name="cornerRadius">16dp</item>
+        <item name="rippleColor">@color/rabbit_accent</item>
+        <item name="strokeColor">@color/rabbit_outline_glass</item>
+        <item name="strokeWidth">0.75dp</item>
+    </style>
+
+    <style name="RabbitTextButton" parent="Widget.Material3.Button.TextButton">
+        <item name="android:textColor">@color/rabbit_accent_soft</item>
+        <item name="rippleColor">@color/rabbit_accent</item>
+    </style>
+
+    <style name="RabbitOutlinedButton" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="android:textColor">@color/rabbit_accent_soft</item>
+        <item name="backgroundTint">@color/rabbit_button_tint</item>
+        <item name="cornerRadius">16dp</item>
+        <item name="rippleColor">@color/rabbit_accent</item>
+        <item name="strokeColor">@color/rabbit_outline_glass</item>
+        <item name="strokeWidth">1dp</item>
+    </style>
+
+    <style name="RabbitTextInput" parent="Widget.Material3.TextInputLayout.OutlinedBox">
+        <item name="boxBackgroundColor">#9C080411</item>
+        <item name="boxCornerRadiusBottomEnd">16dp</item>
+        <item name="boxCornerRadiusBottomStart">16dp</item>
+        <item name="boxCornerRadiusTopEnd">16dp</item>
+        <item name="boxCornerRadiusTopStart">16dp</item>
+        <item name="boxStrokeColor">@color/rabbit_outline_bright</item>
+        <item name="hintTextColor">@color/rabbit_text_secondary</item>
+    </style>
+
+    <style name="RabbitTextInput.ExposedDropdownMenu" parent="Widget.Material3.TextInputLayout.OutlinedBox.ExposedDropdownMenu">
+        <item name="boxBackgroundColor">#9C080411</item>
+        <item name="boxCornerRadiusBottomEnd">16dp</item>
+        <item name="boxCornerRadiusBottomStart">16dp</item>
+        <item name="boxCornerRadiusTopEnd">16dp</item>
+        <item name="boxCornerRadiusTopStart">16dp</item>
+        <item name="boxStrokeColor">@color/rabbit_outline_bright</item>
+        <item name="hintTextColor">@color/rabbit_text_secondary</item>
+    </style>
+
+    <style name="RabbitPopupMenu" parent="Widget.Material3.PopupMenu">
+        <item name="android:popupBackground">@drawable/rabbit_popup_background</item>
+    </style>
+
+    <style name="RabbitAlertDialogTheme" parent="ThemeOverlay.Material3.MaterialAlertDialog">
+        <item name="colorPrimary">@color/rabbit_accent_soft</item>
+        <item name="colorSurface">@color/rabbit_card</item>
+        <item name="colorOnSurface">@color/rabbit_text_primary</item>
+        <item name="colorOnSurfaceVariant">@color/rabbit_text_secondary</item>
+        <item name="colorOutline">@color/rabbit_outline_bright</item>
+    </style>
+
+    <style name="RabbitQrButton" parent="Widget.Material3.Button.TonalButton.Icon">
+        <item name="android:minHeight">50dp</item>
+        <item name="android:textColor">@color/rabbit_text_primary</item>
+        <item name="backgroundTint">#E4211238</item>
+        <item name="cornerRadius">18dp</item>
+        <item name="iconTint">@color/rabbit_accent_soft</item>
+        <item name="rippleColor">@color/rabbit_accent</item>
+        <item name="strokeColor">@color/rabbit_outline_glass</item>
+        <item name="strokeWidth">1dp</item>
+    </style>
+
+    <style name="WireGuardTheme.MaterialCardView" parent="Widget.Material3.CardView.Elevated">
+        <item name="cornerRadius">4dp</item>
+        <item name="contentPadding">8dp</item>
+    </style>
+
+    <style name="WireGuardTheme.BottomSheetDialog" parent="ThemeOverlay.Material3.BottomSheetDialog">
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
+    <style name="NoBackgroundTheme" parent="AppTheme">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:background">@android:color/transparent</item>
+        <item name="colorPrimaryDark">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:windowEnterAnimation">@android:anim/fade_in</item>
+        <item name="android:windowExitAnimation">@android:anim/fade_out</item>
+    </style>
+
+    <style name="TvTheme" parent="AppTheme">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+    </style>
+</resources>

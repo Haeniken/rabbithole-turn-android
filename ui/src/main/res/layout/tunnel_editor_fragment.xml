@@ -1,0 +1,661 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+  ~ Copyright © 2017-2025 WireGuard LLC. All Rights Reserved.
+  ~ SPDX-License-Identifier: Apache-2.0
+  -->
+<layout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <data>
+
+        <import type="com.wireguard.android.util.ClipboardUtils" />
+
+        <import type="com.wireguard.android.widget.KeyInputFilter" />
+
+        <import type="com.wireguard.android.widget.NameInputFilter" />
+
+        <variable
+            name="fragment"
+            type="com.wireguard.android.fragment.TunnelEditorFragment" />
+
+        <variable
+            name="config"
+            type="com.wireguard.android.viewmodel.ConfigProxy" />
+
+        <variable
+            name="name"
+            type="String" />
+    </data>
+
+    <androidx.coordinatorlayout.widget.CoordinatorLayout
+        android:id="@+id/main_container"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/rabbit_main_background">
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:fillViewport="true"
+            android:paddingBottom="16dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:layout_marginTop="16dp"
+                    android:layout_marginEnd="12dp"
+                    android:layout_marginBottom="12dp"
+                    app:cardBackgroundColor="@android:color/transparent"
+                    app:cardCornerRadius="24dp"
+                    app:cardElevation="0dp"
+                    app:strokeColor="@color/rabbit_outline_bright"
+                    app:strokeWidth="1dp">
+
+                    <androidx.constraintlayout.widget.ConstraintLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/rabbit_panel_background"
+                        android:padding="8dp">
+
+                        <com.google.android.material.textview.MaterialTextView
+                            android:id="@+id/interface_title"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_margin="8dp"
+                            android:layout_marginTop="32dp"
+                            android:text="@string/interface_title"
+                            android:textColor="@color/rabbit_accent_soft"
+                            android:textAppearance="?attr/textAppearanceTitleMedium"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintTop_toTopOf="parent" />
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/interface_name_layout"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_margin="4dp"
+                            android:hint="@string/name"
+                            app:layout_constraintEnd_toEndOf="parent"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintTop_toBottomOf="@+id/interface_title">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/interface_name_text"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:imeOptions="actionNext"
+                                android:inputType="textNoSuggestions|textVisiblePassword"
+                                android:nextFocusDown="@id/private_key_text"
+                                android:nextFocusForward="@id/private_key_text"
+                                android:text="@={name}"
+                                app:filter="@{NameInputFilter.newInstance()}" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/private_key_text_layout"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_margin="4dp"
+                            android:hint="@string/private_key"
+                            app:endIconContentDescription="@string/generate_new_private_key"
+                            app:endIconDrawable="@drawable/ic_action_generate"
+                            app:endIconMode="custom"
+                            app:layout_constraintEnd_toEndOf="parent"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintTop_toBottomOf="@+id/interface_name_layout">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/private_key_text"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:imeOptions="actionNext"
+                                android:inputType="textNoSuggestions|textPassword"
+                                android:nextFocusUp="@id/interface_name_text"
+                                android:nextFocusDown="@id/public_key_text"
+                                android:nextFocusForward="@id/public_key_text"
+                                android:onClick="@{fragment::onKeyClick}"
+                                android:text="@={config.interface.privateKey}"
+                                app:filter="@{KeyInputFilter.newInstance()}"
+                                app:onFocusChange="@{fragment::onKeyFocusChange}" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/public_key_label_layout"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_margin="4dp"
+                            android:hint="@string/public_key"
+                            app:expandedHintEnabled="false"
+                            app:layout_constraintEnd_toEndOf="parent"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintTop_toBottomOf="@+id/private_key_text_layout">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/public_key_text"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:editable="false"
+                                android:ellipsize="end"
+                                android:focusable="false"
+                                android:hint="@string/hint_generated"
+                                android:imeOptions="actionNext"
+                                android:nextFocusUp="@id/private_key_text"
+                                android:nextFocusDown="@id/addresses_label_text"
+                                android:nextFocusForward="@id/addresses_label_text"
+                                android:onClick="@{ClipboardUtils::copyTextView}"
+                                android:singleLine="true"
+                                android:text="@{config.interface.publicKey}" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/addresses_label_layout"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_margin="4dp"
+                            android:hint="@string/addresses"
+                            app:layout_constraintEnd_toStartOf="@id/listen_port_label_layout"
+                            app:layout_constraintHorizontal_chainStyle="spread"
+                            app:layout_constraintHorizontal_weight="0.7"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintTop_toBottomOf="@+id/public_key_label_layout">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/addresses_label_text"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:imeOptions="actionNext"
+                                android:inputType="textNoSuggestions|textVisiblePassword"
+                                android:nextFocusUp="@id/public_key_text"
+                                android:nextFocusDown="@id/dns_servers_text"
+                                android:nextFocusForward="@id/listen_port_text"
+                                android:text="@={config.interface.addresses}" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/listen_port_label_layout"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_margin="4dp"
+                            android:hint="@string/listen_port"
+                            app:expandedHintEnabled="false"
+                            app:layout_constraintEnd_toEndOf="parent"
+                            app:layout_constraintHorizontal_weight="0.3"
+                            app:layout_constraintStart_toEndOf="@id/addresses_label_layout"
+                            app:layout_constraintTop_toBottomOf="@id/public_key_label_layout">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/listen_port_text"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:hint="@string/hint_random"
+                                android:imeOptions="actionNext"
+                                android:inputType="number"
+                                android:nextFocusUp="@id/public_key_text"
+                                android:nextFocusDown="@id/mtu_text"
+                                android:nextFocusForward="@id/dns_servers_text"
+                                android:text="@={config.interface.listenPort}"
+                                android:textAlignment="center" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/dns_servers_label_layout"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_margin="4dp"
+                            android:hint="@string/dns_servers"
+                            app:layout_constraintEnd_toStartOf="@id/mtu_label_layout"
+                            app:layout_constraintHorizontal_chainStyle="spread"
+                            app:layout_constraintHorizontal_weight="0.7"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintTop_toBottomOf="@+id/addresses_label_layout">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/dns_servers_text"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:imeOptions="actionNext"
+                                android:inputType="textNoSuggestions|textVisiblePassword"
+                                android:nextFocusUp="@id/addresses_label_text"
+                                android:nextFocusDown="@id/set_excluded_applications"
+                                android:nextFocusForward="@id/mtu_text"
+                                android:text="@={config.interface.dnsServers}" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/mtu_label_layout"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_margin="4dp"
+                            android:hint="@string/mtu"
+                            app:expandedHintEnabled="false"
+                            app:layout_constraintEnd_toEndOf="parent"
+                            app:layout_constraintHorizontal_weight="0.3"
+                            app:layout_constraintStart_toEndOf="@id/dns_servers_label_layout"
+                            app:layout_constraintTop_toBottomOf="@id/addresses_label_layout">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/mtu_text"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:hint="@string/hint_automatic"
+                                android:imeOptions="actionDone"
+                                android:inputType="number"
+                                android:nextFocusUp="@id/listen_port_text"
+                                android:nextFocusDown="@id/set_excluded_applications"
+                                android:nextFocusForward="@id/set_excluded_applications"
+                                android:text="@={config.interface.mtu}"
+                                android:textAlignment="center" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/set_excluded_applications"
+                            style="@style/RabbitTextButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_margin="4dp"
+                            android:nextFocusUp="@id/dns_servers_text"
+                            android:nextFocusDown="@id/peers_layout"
+                            android:nextFocusForward="@id/peers_layout"
+                            android:onClick="@{fragment::onRequestSetExcludedIncludedApplications}"
+                            android:text="@{config.interface.includedApplications.size > 0 ? @plurals/set_included_applications(config.interface.includedApplications.size, config.interface.includedApplications.size) : config.interface.excludedApplications.size > 0 ? @plurals/set_excluded_applications(config.interface.excludedApplications.size, config.interface.excludedApplications.size) : @string/all_applications}"
+                            android:textColor="?attr/colorSecondary"
+                            app:layout_constraintBottom_toBottomOf="parent"
+                            app:layout_constraintEnd_toEndOf="parent"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintTop_toBottomOf="@id/mtu_label_layout"
+                            app:rippleColor="?attr/colorSecondary"
+                            tools:text="4 excluded applications" />
+                    </androidx.constraintlayout.widget.ConstraintLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:layout_marginTop="0dp"
+                    android:layout_marginEnd="12dp"
+                    android:layout_marginBottom="12dp"
+                    app:cardBackgroundColor="@android:color/transparent"
+                    app:cardCornerRadius="24dp"
+                    app:cardElevation="0dp"
+                    app:strokeColor="@color/rabbit_outline_bright"
+                    app:strokeWidth="1dp">
+
+                    <androidx.constraintlayout.widget.ConstraintLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/rabbit_panel_background"
+                        android:padding="8dp">
+
+                        <com.google.android.material.textview.MaterialTextView
+                            android:id="@+id/turn_title"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_margin="8dp"
+                            android:text="@string/turn_title"
+                            android:textColor="@color/rabbit_accent_soft"
+                            android:textAppearance="?attr/textAppearanceTitleMedium"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintTop_toTopOf="parent" />
+
+                        <com.google.android.material.switchmaterial.SwitchMaterial
+                            android:id="@+id/turn_enable_switch"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginEnd="8dp"
+                            android:text="@string/turn_enable"
+                            android:checked="@={config.turn.enabled}"
+                            app:layout_constraintBaseline_toBaselineOf="@id/turn_title"
+                            app:layout_constraintEnd_toEndOf="parent" />
+
+                        <!-- ===== Peer Section ===== -->
+                        <com.google.android.material.textview.MaterialTextView
+                            android:id="@+id/turn_peer_section_title"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="16dp"
+                            android:layout_marginTop="8dp"
+                            android:text="@string/turn_peer"
+                            android:textAppearance="?attr/textAppearanceBodyMedium"
+                            android:textStyle="bold"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintTop_toBottomOf="@id/turn_enable_switch" />
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/turn_peer_type_layout"
+                            style="@style/RabbitTextInput.ExposedDropdownMenu"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_margin="4dp"
+                            android:hint="@string/turn_peer_type"
+                            android:enabled="@{config.turn.enabled}"
+                            app:layout_constraintEnd_toEndOf="parent"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintTop_toBottomOf="@id/turn_peer_section_title">
+
+                            <AutoCompleteTextView
+                                android:id="@+id/turn_peer_type_spinner"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="none"
+                                android:enabled="@{config.turn.enabled}" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/turn_peer_layout"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_margin="4dp"
+                            android:hint="@string/turn_peer_address"
+                            android:enabled="@{config.turn.enabled}"
+                            app:expandedHintEnabled="false"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintTop_toBottomOf="@id/turn_peer_type_layout"
+                            app:layout_constraintEnd_toEndOf="parent">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/turn_peer_text"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:enabled="@{config.turn.enabled}"
+                                android:imeOptions="actionNext"
+                                android:inputType="textNoSuggestions|textVisiblePassword"
+                                android:hint="@string/turn_peer_hint"
+                                android:text="@={config.turn.peer}" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <!-- ===== TURN Server Section ===== -->
+                        <com.google.android.material.textview.MaterialTextView
+                            android:id="@+id/turn_server_section_title"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="16dp"
+                            android:layout_marginTop="8dp"
+                            android:text="@string/turn_server_mode"
+                            android:textAppearance="?attr/textAppearanceBodyMedium"
+                            android:textStyle="bold"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintTop_toBottomOf="@id/turn_peer_layout" />
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/turn_mode_layout"
+                            style="@style/RabbitTextInput.ExposedDropdownMenu"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_margin="4dp"
+                            android:hint="@string/turn_mode"
+                            android:enabled="@{config.turn.enabled}"
+                            app:layout_constraintEnd_toEndOf="parent"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintTop_toBottomOf="@id/turn_server_section_title">
+
+                            <AutoCompleteTextView
+                                android:id="@+id/turn_mode_spinner"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="none"
+                                android:enabled="@{config.turn.enabled}" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/turn_vk_link_layout"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_margin="4dp"
+                            android:hint="@string/turn_vk_link"
+                            android:enabled="@{config.turn.enabled}"
+                            android:visibility="@{config.turn.mode.equals(`vk_link`) ? android.view.View.VISIBLE : android.view.View.GONE}"
+                            app:expandedHintEnabled="false"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintTop_toBottomOf="@id/turn_mode_layout"
+                            app:layout_constraintEnd_toEndOf="parent">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/turn_vk_link_text"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:enabled="@{config.turn.enabled}"
+                                android:imeOptions="actionNext"
+                                android:inputType="textNoSuggestions|textVisiblePassword"
+                                android:hint="@string/turn_vk_link_hint"
+                                android:text="@={config.turn.vkLink}" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/turn_streams_layout"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_margin="4dp"
+                            android:hint="@string/turn_streams"
+                            android:enabled="@{config.turn.enabled}"
+                            app:expandedHintEnabled="false"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintTop_toBottomOf="@id/turn_vk_link_layout"
+                            app:layout_constraintEnd_toStartOf="@id/turn_udp_switch"
+                            app:layout_constraintHorizontal_weight="0.5">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/turn_streams_text"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:enabled="@{config.turn.enabled}"
+                                android:hint="@string/turn_streams_hint"
+                                android:imeOptions="actionNext"
+                                android:inputType="number"
+                                android:text="@={config.turn.streams}" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <com.google.android.material.switchmaterial.SwitchMaterial
+                            android:id="@+id/turn_udp_switch"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_margin="8dp"
+                            android:checked="@={config.turn.useUdp}"
+                            android:enabled="@{config.turn.enabled}"
+                            android:text="@string/turn_use_udp"
+                            app:layout_constraintEnd_toEndOf="parent"
+                            app:layout_constraintStart_toEndOf="@id/turn_streams_layout"
+                            app:layout_constraintTop_toBottomOf="@id/turn_vk_link_layout" />
+
+                        <!-- ===== Advanced Settings Section ===== -->
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/turn_advanced_toggle"
+                            style="@style/RabbitTextButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_margin="4dp"
+                            android:onClick="@{() -> config.turn.setAdvancedExpanded(!config.turn.advancedExpanded)}"
+                            android:text="@string/turn_advanced"
+                            app:icon="@{config.turn.advancedExpanded ? @drawable/ic_action_expand_less : @drawable/ic_action_expand_more}"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintTop_toBottomOf="@id/turn_udp_switch" />
+
+                        <LinearLayout
+                            android:id="@+id/turn_advanced_layout"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:visibility="@{config.turn.advancedExpanded ? android.view.View.VISIBLE : android.view.View.GONE}"
+                            app:layout_constraintTop_toBottomOf="@id/turn_advanced_toggle">
+
+                            <LinearLayout
+                                android:id="@+id/turn_server_ip_port_layout"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal">
+
+                                <com.google.android.material.textfield.TextInputLayout
+                                    android:id="@+id/turn_ip_layout"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_margin="4dp"
+                                    android:layout_weight="0.6"
+                                    android:enabled="@{config.turn.enabled}"
+                                    android:hint="@string/turn_ip"
+                                    app:expandedHintEnabled="false">
+
+                                    <com.google.android.material.textfield.TextInputEditText
+                                        android:id="@+id/turn_ip_text"
+                                        android:layout_width="match_parent"
+                                        android:layout_height="wrap_content"
+                                        android:hint="@string/turn_ip_hint"
+                                        android:imeOptions="actionNext"
+                                        android:inputType="textNoSuggestions|textVisiblePassword"
+                                        android:text="@={config.turn.turnIp}" />
+                                </com.google.android.material.textfield.TextInputLayout>
+
+                                <com.google.android.material.textfield.TextInputLayout
+                                    android:id="@+id/turn_port_layout"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_margin="4dp"
+                                    android:layout_weight="0.4"
+                                    android:enabled="@{config.turn.enabled}"
+                                    android:hint="@string/turn_port"
+                                    app:expandedHintEnabled="false">
+
+                                    <com.google.android.material.textfield.TextInputEditText
+                                        android:id="@+id/turn_port_text"
+                                        android:layout_width="match_parent"
+                                        android:layout_height="wrap_content"
+                                        android:hint="@string/turn_port_hint"
+                                        android:imeOptions="actionNext"
+                                        android:inputType="number"
+                                        android:text="@={config.turn.turnPort}" />
+                                </com.google.android.material.textfield.TextInputLayout>
+                            </LinearLayout>
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:id="@+id/turn_watchdog_timeout_layout"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_margin="4dp"
+                                android:enabled="@{config.turn.enabled}"
+                                android:hint="@string/turn_watchdog_timeout"
+                                app:expandedHintEnabled="false">
+
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/turn_watchdog_timeout_text"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:enabled="@{config.turn.enabled}"
+                                    android:imeOptions="actionNext"
+                                    android:inputType="number"
+                                    android:hint="@string/turn_watchdog_timeout_hint"
+                                    android:text="@={config.turn.watchdogTimeout}" />
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:id="@+id/turn_local_port_layout"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_margin="4dp"
+                                android:enabled="@{config.turn.enabled}"
+                                android:hint="@string/turn_local_port"
+                                app:expandedHintEnabled="false">
+
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/turn_local_port_text"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:enabled="@{config.turn.enabled}"
+                                    android:imeOptions="actionNext"
+                                    android:inputType="number"
+                                    android:hint="@string/turn_local_port_hint"
+                                    android:text="@={config.turn.localPort}" />
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:id="@+id/turn_streams_per_cred_layout"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_margin="4dp"
+                                android:enabled="@{config.turn.enabled}"
+                                android:hint="@string/turn_streams_per_cred"
+                                app:expandedHintEnabled="false">
+
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/turn_streams_per_cred_text"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:enabled="@{config.turn.enabled}"
+                                    android:imeOptions="actionNext"
+                                    android:inputType="number"
+                                    android:hint="@string/turn_streams_per_cred_hint"
+                                    android:text="@={config.turn.streamsPerCred}" />
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                            <com.google.android.material.materialswitch.MaterialSwitch
+                                android:id="@+id/turn_wrap_switch"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_margin="4dp"
+                                android:checked="@={config.turn.useWrap}"
+                                android:enabled="@{config.turn.enabled}"
+                                android:text="@string/turn_use_wrap" />
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:id="@+id/turn_wrap_key_layout"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_margin="4dp"
+                                android:enabled="@{config.turn.enabled &amp;&amp; config.turn.useWrap}"
+                                android:hint="@string/turn_wrap_key"
+                                android:visibility="@{config.turn.useWrap ? android.view.View.VISIBLE : android.view.View.GONE}"
+                                app:expandedHintEnabled="false">
+
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/turn_wrap_key_text"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:enabled="@{config.turn.enabled &amp;&amp; config.turn.useWrap}"
+                                    android:hint="@string/turn_wrap_key_hint"
+                                    android:imeOptions="actionDone"
+                                    android:inputType="textNoSuggestions|textVisiblePassword"
+                                    android:text="@={config.turn.wrapKeyHex}" />
+                            </com.google.android.material.textfield.TextInputLayout>
+                        </LinearLayout>
+
+                    </androidx.constraintlayout.widget.ConstraintLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <LinearLayout
+                    android:id="@+id/peers_layout"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:divider="@null"
+                    android:orientation="vertical"
+                    app:fragment="@{fragment}"
+                    app:items="@{config.peers}"
+                    app:layout="@{@layout/tunnel_editor_peer}"
+                    tools:ignore="UselessLeaf" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/add_peer_button"
+                    style="@style/RabbitOutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginHorizontal="12dp"
+                    android:layout_marginTop="4dp"
+                    android:layout_marginBottom="16dp"
+                    android:layout_gravity="bottom"
+                    android:gravity="center"
+                    android:onClick="@{() -> config.addPeer()}"
+                    android:text="@string/add_peer"
+                    android:textColor="@color/rabbit_accent_soft"
+                    app:layout_anchorGravity="bottom"
+                    app:rippleColor="@color/rabbit_accent"
+                    app:strokeColor="@color/rabbit_outline_bright"
+                    app:strokeWidth="1dp" />
+            </LinearLayout>
+        </ScrollView>
+    </androidx.coordinatorlayout.widget.CoordinatorLayout>
+</layout>

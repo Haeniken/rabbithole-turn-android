@@ -1,0 +1,231 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/rabbit_add_sheet_background"
+    android:paddingStart="12dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="12dp"
+    android:paddingBottom="14dp">
+
+    <View
+        android:id="@+id/sheet_handle"
+        android:layout_width="38dp"
+        android:layout_height="4dp"
+        android:background="@drawable/rabbit_sheet_handle"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <TextView
+        android:id="@+id/sheet_title"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:layout_marginTop="14dp"
+        android:layout_marginEnd="8dp"
+        android:fontFamily="sans-serif-medium"
+        android:text="@string/add_menu_title"
+        android:textColor="@color/rabbit_text_primary"
+        android:textSize="20sp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/sheet_handle" />
+
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/add_subscription"
+        android:layout_width="0dp"
+        android:layout_height="60dp"
+        android:layout_marginTop="14dp"
+        android:clickable="true"
+        android:contentDescription="@string/add_subscription"
+        android:focusable="true"
+        android:foreground="?attr/selectableItemBackground"
+        android:nextFocusDown="@id/create_from_file"
+        android:nextFocusForward="@id/create_from_file"
+        app:cardBackgroundColor="@android:color/transparent"
+        app:cardCornerRadius="17dp"
+        app:cardElevation="0dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/sheet_title"
+        app:strokeWidth="0dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/rabbit_add_menu_primary_background"
+            android:duplicateParentState="true"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="18dp">
+
+            <ImageView
+                android:layout_width="25dp"
+                android:layout_height="25dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_action_subscription"
+                app:tint="@color/rabbit_text_primary" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:layout_weight="1"
+                android:fontFamily="sans-serif-medium"
+                android:maxLines="2"
+                android:text="@string/add_subscription"
+                android:textColor="@color/rabbit_text_primary"
+                android:textSize="15sp" />
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/create_from_file"
+        android:layout_width="0dp"
+        android:layout_height="60dp"
+        android:layout_marginTop="8dp"
+        android:clickable="true"
+        android:contentDescription="@string/create_from_file"
+        android:focusable="true"
+        android:foreground="?attr/selectableItemBackground"
+        android:nextFocusDown="@id/create_from_qrcode"
+        android:nextFocusForward="@id/create_from_qrcode"
+        android:nextFocusUp="@id/add_subscription"
+        app:cardBackgroundColor="@android:color/transparent"
+        app:cardCornerRadius="17dp"
+        app:cardElevation="0dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/add_subscription"
+        app:strokeWidth="0dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/rabbit_add_menu_item_background"
+            android:duplicateParentState="true"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="18dp">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_action_open"
+                app:tint="@color/rabbit_accent_soft" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:layout_weight="1"
+                android:fontFamily="sans-serif-medium"
+                android:maxLines="2"
+                android:text="@string/create_from_file"
+                android:textColor="@color/rabbit_text_primary"
+                android:textSize="15sp" />
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/create_from_qrcode"
+        android:layout_width="0dp"
+        android:layout_height="60dp"
+        android:layout_marginTop="8dp"
+        android:clickable="true"
+        android:contentDescription="@string/create_from_qr_code"
+        android:focusable="true"
+        android:foreground="?attr/selectableItemBackground"
+        android:nextFocusDown="@id/create_empty"
+        android:nextFocusForward="@id/create_empty"
+        android:nextFocusUp="@id/create_from_file"
+        app:cardBackgroundColor="@android:color/transparent"
+        app:cardCornerRadius="17dp"
+        app:cardElevation="0dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/create_from_file"
+        app:strokeWidth="0dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/rabbit_add_menu_item_background"
+            android:duplicateParentState="true"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="18dp">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_action_scan_qr_code"
+                app:tint="@color/rabbit_accent_soft" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:layout_weight="1"
+                android:fontFamily="sans-serif-medium"
+                android:maxLines="2"
+                android:text="@string/create_from_qr_code"
+                android:textColor="@color/rabbit_text_primary"
+                android:textSize="15sp" />
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/create_empty"
+        android:layout_width="0dp"
+        android:layout_height="60dp"
+        android:layout_marginTop="8dp"
+        android:clickable="true"
+        android:contentDescription="@string/create_empty"
+        android:focusable="true"
+        android:foreground="?attr/selectableItemBackground"
+        android:nextFocusUp="@id/create_from_qrcode"
+        app:cardBackgroundColor="@android:color/transparent"
+        app:cardCornerRadius="17dp"
+        app:cardElevation="0dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/create_from_qrcode"
+        app:strokeWidth="0dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/rabbit_add_menu_item_background"
+            android:duplicateParentState="true"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="18dp">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_action_edit"
+                app:tint="@color/rabbit_accent_soft" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:layout_weight="1"
+                android:fontFamily="sans-serif-medium"
+                android:maxLines="2"
+                android:text="@string/create_empty"
+                android:textColor="@color/rabbit_text_primary"
+                android:textSize="15sp" />
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

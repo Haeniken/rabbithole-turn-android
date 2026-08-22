@@ -1,0 +1,41 @@
+-allowaccessmodification
+-dontusemixedcaseclassnames
+-dontobfuscate
+-verbose
+
+-keepattributes *Annotation*
+
+-keepclasseswithmembernames class * {
+    native <methods>;
+}
+
+-keepclassmembers enum * {
+    public static **[] values();
+    public static ** valueOf(java.lang.String);
+}
+
+-keepclassmembers class * implements android.os.Parcelable {
+  public static final ** CREATOR;
+}
+
+-keep class androidx.annotation.Keep
+
+-keep @androidx.annotation.Keep class * {*;}
+
+-keepclasseswithmembers class * {
+    @androidx.annotation.Keep <methods>;
+}
+
+-keepclasseswithmembers class * {
+    @androidx.annotation.Keep <fields>;
+}
+
+-keepclasseswithmembers class * {
+    @androidx.annotation.Keep <init>(...);
+}
+
+# Keep TurnBackend methods called from JNI via reflection
+-keep class com.wireguard.android.backend.TurnBackend {
+    public static void setCaptchaHandler(java.util.function.Function);
+    public static java.lang.String onCaptchaRequired(java.lang.String);
+}

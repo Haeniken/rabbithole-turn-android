@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+  ~ Copyright © 2017-2025 WireGuard LLC. All Rights Reserved.
+  ~ SPDX-License-Identifier: Apache-2.0
+  -->
+<resources>
+    <dimen name="fab_margin">16dp</dimen>
+    <dimen name="bottom_sheet_item_height">56dp</dimen>
+    <dimen name="normal_margin">8dp</dimen>
+    <dimen name="bottom_sheet_top_padding">8dp</dimen>
+    <dimen name="bottom_sheet_icon_padding">16dp</dimen>
+    <dimen name="tunnel_list_placeholder_margin">16dp</dimen>
+    <dimen name="main_screen_horizontal_padding">16dp</dimen>
+    <dimen name="main_header_top_margin">14dp</dimen>
+    <dimen name="main_header_title_text_size">21sp</dimen>
+    <dimen name="main_section_margin">12dp</dimen>
+    <dimen name="main_screen_bottom_margin">12dp</dimen>
+    <dimen name="main_hero_min_height">216dp</dimen>
+    <dimen name="main_hero_padding">20dp</dimen>
+    <dimen name="main_hero_title_text_size">18sp</dimen>
+    <dimen name="main_hero_status_text_size">13sp</dimen>
+    <dimen name="main_power_size">124dp</dimen>
+    <dimen name="main_power_end_margin">7dp</dimen>
+</resources>

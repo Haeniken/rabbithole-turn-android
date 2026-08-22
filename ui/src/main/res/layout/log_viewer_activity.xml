@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/rabbit_main_background"
+    android:fitsSystemWindows="true">
+
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/log_overview_card"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="12dp"
+        android:layout_marginTop="10dp"
+        app:cardBackgroundColor="@android:color/transparent"
+        app:cardCornerRadius="18dp"
+        app:cardElevation="0dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:strokeColor="@color/rabbit_outline_bright"
+        app:strokeWidth="1dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/rabbit_hero_background"
+            android:orientation="vertical"
+            android:paddingVertical="10dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="14dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="sans-serif-medium"
+                        android:text="@string/log_overview_title"
+                        android:textColor="@color/rabbit_text_primary"
+                        android:textSize="16sp" />
+
+                    <TextView
+                        android:id="@+id/log_status"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="@string/log_live_status"
+                        android:textColor="#75E4A8"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/log_count"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/rabbit_log_count_background"
+                    android:fontFamily="sans-serif-medium"
+                    android:paddingHorizontal="9dp"
+                    android:paddingVertical="4dp"
+                    android:textColor="@color/rabbit_accent_soft"
+                    android:textSize="11sp"
+                    tools:text="248" />
+            </LinearLayout>
+
+            <HorizontalScrollView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:clipToPadding="false"
+                android:fillViewport="false"
+                android:paddingHorizontal="10dp"
+                android:scrollbars="none">
+
+                <com.google.android.material.button.MaterialButtonToggleGroup
+                    android:id="@+id/log_filters"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    app:selectionRequired="true"
+                    app:singleSelection="true">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/filter_all"
+                        style="@style/RabbitLogFilterButton"
+                        android:checked="true"
+                        android:text="@string/log_filter_all" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/filter_tunnel"
+                        style="@style/RabbitLogFilterButton"
+                        android:text="@string/log_group_tunnel" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/filter_turn"
+                        style="@style/RabbitLogFilterButton"
+                        android:text="@string/log_group_turn" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/filter_subscription"
+                        style="@style/RabbitLogFilterButton"
+                        android:text="@string/log_group_subscription" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/filter_routing"
+                        style="@style/RabbitLogFilterButton"
+                        android:text="@string/log_group_routing" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/filter_app"
+                        style="@style/RabbitLogFilterButton"
+                        android:text="@string/log_group_app" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/filter_errors"
+                        style="@style/RabbitLogFilterButton"
+                        android:text="@string/log_filter_errors" />
+                </com.google.android.material.button.MaterialButtonToggleGroup>
+            </HorizontalScrollView>
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recycler_view"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:clipToPadding="false"
+        android:paddingHorizontal="2dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="72dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/log_overview_card"
+        tools:itemCount="6"
+        tools:listitem="@layout/log_viewer_entry" />
+
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/share_fab"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="16dp"
+        android:contentDescription="@string/log_export_title"
+        app:backgroundTint="@color/rabbit_surface_high"
+        app:fabCustomSize="48dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:srcCompat="@drawable/ic_action_share_white"
+        app:rippleColor="@color/rabbit_accent"
+        app:tint="@color/rabbit_accent_soft" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

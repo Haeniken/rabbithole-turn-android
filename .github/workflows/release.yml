@@ -1,0 +1,118 @@
+name: Android Release
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Read application version
+        id: version
+        shell: bash
+        run: |
+          version="$(sed -n 's/^wireguardVersionName=//p' gradle.properties)"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid wireguardVersionName: $version" >&2
+            exit 1
+          fi
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match v$version" >&2
+            exit 1
+          fi
+          echo "name=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+          cache: gradle
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: tunnel/tools/libwg-go/go.sum
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: sdkmanager "ndk;29.0.14206865"
+
+      - name: Restore release keystore
+        id: signing
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_SIGNING_KEYSTORE_BASE64 }}
+        run: |
+          if [[ -z "$KEYSTORE_BASE64" ]]; then
+            echo "ANDROID_SIGNING_KEYSTORE_BASE64 is not configured" >&2
+            exit 1
+          fi
+          keystore="$RUNNER_TEMP/rabbithole-release.jks"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          chmod 600 "$keystore"
+          echo "path=$keystore" >> "$GITHUB_OUTPUT"
+
+      - name: Build signed release APK
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ steps.signing.outputs.path }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}
+        run: ./gradlew :ui:testDebugUnitTest :tunnel:testDebugUnitTest :ui:lintDebug :ui:assembleRelease --stacktrace
+
+      - name: Verify and name APK
+        id: artifact
+        shell: bash
+        run: |
+          apk="rabbit-hole-${{ steps.version.outputs.name }}.apk"
+          mv ui/build/outputs/apk/release/ui-release.apk "$apk"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$apk" | tee apksigner-report.txt
+          if grep -q "CN=Android Debug" apksigner-report.txt; then
+            echo "Release APK was signed with the debug certificate" >&2
+            exit 1
+          fi
+          sha256sum "$apk" > "$apk.sha256"
+          echo "apk=$apk" >> "$GITHUB_OUTPUT"
+
+      - name: Upload signed APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rabbit-hole-${{ steps.version.outputs.name }}-signed
+          path: |
+            ${{ steps.artifact.outputs.apk }}
+            ${{ steps.artifact.outputs.apk }}.sha256
+            apksigner-report.txt
+          retention-days: 90
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "${{ steps.artifact.outputs.apk }}" \
+            "${{ steps.artifact.outputs.apk }}.sha256" \
+            --verify-tag \
+            --title "Кроличья нора ${{ steps.version.outputs.name }}" \
+            --generate-notes

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="connection_wonderland_messages">
+        <item>Следуем за белым кроликом…</item>
+        <item>Ныряем глубже в кроличью нору…</item>
+        <item>Открываем портал в Страну чудес…</item>
+        <item>Ищем путь по ту сторону зеркала…</item>
+        <item>Прокладываем маршрут сквозь нору…</item>
+        <item>Сверяем часы белого кролика…</item>
+        <item>Зажигаем огни в туннеле…</item>
+        <item>Портал почти открыт…</item>
+        <item>Реальность становится тоньше…</item>
+        <item>Ещё немного — и мы по ту сторону…</item>
+    </string-array>
+</resources>

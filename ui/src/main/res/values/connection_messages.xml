@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="connection_wonderland_messages">
+        <item>Following the white rabbit…</item>
+        <item>Diving deeper into the rabbit hole…</item>
+        <item>Opening a portal to Wonderland…</item>
+        <item>Looking for a path through the looking glass…</item>
+        <item>Charting a route through the rabbit hole…</item>
+        <item>Checking the white rabbit’s watch…</item>
+        <item>Lighting the tunnel…</item>
+        <item>The portal is almost open…</item>
+        <item>Reality is growing thinner…</item>
+        <item>Just a little further to the other side…</item>
+    </string-array>
+</resources>

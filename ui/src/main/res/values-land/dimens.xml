@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="main_screen_horizontal_padding">16dp</dimen>
+    <dimen name="main_header_top_margin">8dp</dimen>
+    <dimen name="main_header_title_text_size">18sp</dimen>
+    <dimen name="main_section_margin">8dp</dimen>
+    <dimen name="main_screen_bottom_margin">8dp</dimen>
+    <dimen name="main_hero_min_height">126dp</dimen>
+    <dimen name="main_hero_padding">14dp</dimen>
+    <dimen name="main_hero_title_text_size">17sp</dimen>
+    <dimen name="main_hero_status_text_size">11sp</dimen>
+    <dimen name="main_power_size">82dp</dimen>
+    <dimen name="main_power_end_margin">5dp</dimen>
+</resources>

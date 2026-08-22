@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools">
+    <data>
+        <import type="android.view.View" />
+        <import type="com.wireguard.android.backend.Tunnel.State" />
+        <import type="com.wireguard.android.model.ObservableTunnel" />
+        <variable name="collection" type="com.wireguard.android.databinding.ObservableKeyedArrayList&lt;String, ObservableTunnel&gt;" />
+        <variable name="key" type="String" />
+        <variable name="item" type="com.wireguard.android.model.ObservableTunnel" />
+        <variable name="fragment" type="com.wireguard.android.fragment.TunnelListFragment" />
+    </data>
+
+    <com.wireguard.android.widget.MultiselectableRelativeLayout
+        android:id="@+id/tunnel_list_item"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/rabbit_list_item_background"
+        android:descendantFocusability="beforeDescendants"
+        android:focusable="true"
+        android:longClickable="true"
+        android:layout_marginVertical="3dp"
+        android:minHeight="68dp"
+        android:paddingHorizontal="13dp"
+        android:paddingVertical="9dp">
+
+        <ImageView
+            android:id="@+id/profile_icon"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_alignParentStart="true"
+            android:layout_centerVertical="true"
+            android:contentDescription="@null"
+            android:src="@mipmap/ic_launcher_round" />
+
+        <TextView
+            android:id="@+id/tunnel_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="13dp"
+            android:layout_marginEnd="28dp"
+            android:layout_toEndOf="@id/profile_icon"
+            android:ellipsize="end"
+            android:fontFamily="sans-serif-medium"
+            android:maxLines="2"
+            android:text="@{key}"
+            android:textColor="@color/rabbit_text_primary"
+            android:textSize="15sp"
+            tools:text="dragon-rv" />
+
+        <TextView
+            android:id="@+id/tunnel_kind"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_alignStart="@id/tunnel_name"
+            android:layout_below="@id/tunnel_name"
+            android:layout_marginTop="2dp"
+            android:layout_marginEnd="28dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="@{item.turnSettings != null &amp;&amp; item.turnSettings.enabled ? @string/main_turn_profile : @string/main_wireguard_profile}"
+            android:textColor="@color/rabbit_text_muted"
+            android:textSize="11sp"
+            tools:text="TURN · защищённый маршрут" />
+
+        <TextView
+            android:id="@+id/tunnel_active_indicator"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_alignParentEnd="true"
+            android:layout_centerVertical="true"
+            android:contentDescription="@string/main_connected"
+            android:text="●"
+            android:textColor="#75E4A8"
+            android:textSize="18sp"
+            android:visibility="@{item.state == State.UP ? View.VISIBLE : View.GONE}"
+            tools:visibility="visible" />
+    </com.wireguard.android.widget.MultiselectableRelativeLayout>
+</layout>
