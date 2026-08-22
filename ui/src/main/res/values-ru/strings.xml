@@ -127,12 +127,22 @@
     <string name="subscription_dialog_message">Конфигурация будет автоматически проверяться каждые 12 часов. Поддерживаются только HTTPS-ссылки.</string>
     <string name="subscription_url_required">Укажите ссылку подписки</string>
     <string name="subscription_added">Подписка «%s» добавлена</string>
+    <plurals name="subscription_bundle_added">
+        <item quantity="one">Подписка «%1$s» добавлена: %2$d подключение</item>
+        <item quantity="few">Подписка «%1$s» добавлена: %2$d подключения</item>
+        <item quantity="many">Подписка «%1$s» добавлена: %2$d подключений</item>
+        <item quantity="other">Подписка «%1$s» добавлена: %2$d подключения</item>
+    </plurals>
     <string name="subscription_add_http_error">Не удалось добавить подписку: сервер вернул HTTP %d</string>
     <string name="subscription_update_http_error">Не удалось обновить подписку: сервер вернул HTTP %d</string>
     <string name="subscription_not_found">Этот туннель не связан с подпиской</string>
     <string name="subscription_tunnel_missing">Связанный с подпиской туннель больше не существует</string>
     <string name="subscription_name_exhausted">Не удалось подобрать уникальное имя для подписки</string>
     <string name="subscription_empty_config">По подписке получена пустая конфигурация</string>
+    <string name="subscription_bundle_already_added">Этот бандл подписки уже добавлен</string>
+    <string name="subscription_bundle_name_invalid">В бандле отсутствует корректное общее название подписки</string>
+    <string name="subscription_bundle_profiles_changed">Сервер вернул другой состав профилей бандла. Добавьте подписку заново.</string>
+    <string name="subscription_format_changed">Сервер вернул другой формат подписки</string>
     <string name="subscription_disabled_error">Подписка отключена провайдером. После повторного включения нажмите «Обновить подписку».</string>
     <string name="subscription_metadata_invalid">Данные подписки повреждены. Добавьте подписку заново перед подключением.</string>
     <string name="subscription_update">Обновить подписку</string>
@@ -141,6 +151,7 @@
     <string name="subscription_updated">Конфигурация подписки обновлена</string>
     <string name="subscription_disabled">Подписка отключена провайдером, туннель остановлен</string>
     <string name="subscription_enabled">Подписка снова активна</string>
+    <string name="subscription_expires">Действует до %s</string>
     <string name="main_secure_route">Личный маршрут</string>
     <string name="main_no_tunnel">Подключение не выбрано</string>
     <string name="main_choose_profile">Добавьте или выберите подключение ниже</string>
@@ -281,6 +292,7 @@
     <string name="routing_lists_updating">Загрузка и проверка GeoIP и GeoSite…</string>
     <string name="routing_lists_updated">Геоданные маршрутизации обновлены</string>
     <string name="routing_lists_update_failed">Ошибка обновления: %s</string>
+    <string name="routing_lists_update_failed_using_cache">Ошибка обновления: %s. Ранее загруженные геоданные продолжают работать.</string>
     <string name="routing_lists_missing_error">Файлы GeoIP и GeoSite отсутствуют. Загрузите геоданные перед запуском этого профиля.</string>
     <string name="routing_lists_invalid_error">Сохранённые GeoIP или GeoSite повреждены. Загрузите геоданные заново перед запуском этого профиля.</string>
     <string name="routing_lists_download_failed_error">Не удалось загрузить GeoIP и GeoSite. Туннель не запущен.</string>

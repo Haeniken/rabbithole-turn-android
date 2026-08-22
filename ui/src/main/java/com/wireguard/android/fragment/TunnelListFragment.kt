@@ -56,6 +56,8 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.text.DateFormat
+import java.util.Date
 import kotlin.random.Random
 
 /**
@@ -83,7 +85,7 @@ class TunnelListFragment : BaseFragment() {
                 try {
                     val qrCodeFromFileScanner = QrCodeFromFileScanner(contentResolver, QRCodeReader())
                     val result = qrCodeFromFileScanner.scan(data)
-                    TunnelImporter.importTunnel(parentFragmentManager, result.text) { showSnackbar(it) }
+                    importQrContent(result.text)
                 } catch (e: Exception) {
                     val error = ErrorMessages[e]
                     val message = Application.get().resources.getString(R.string.import_error, error)
@@ -100,7 +102,7 @@ class TunnelListFragment : BaseFragment() {
         val qrCode = result.contents
         val activity = activity
         if (qrCode != null && activity != null) {
-            activity.lifecycleScope.launch { TunnelImporter.importTunnel(parentFragmentManager, qrCode) { showSnackbar(it) } }
+            activity.lifecycleScope.launch { importQrContent(qrCode) }
         }
     }
 
@@ -269,6 +271,32 @@ class TunnelListFragment : BaseFragment() {
             Toast.makeText(activity ?: Application.get(), message, Toast.LENGTH_SHORT).show()
     }
 
+    private suspend fun importQrContent(content: String) {
+        if (!content.trim().startsWith("https://", ignoreCase = true)) {
+            TunnelImporter.importTunnel(parentFragmentManager, content) { showSnackbar(it) }
+            return
+        }
+        try {
+            val result = Application.getSubscriptionManager().add(content)
+            val message = if (result.subscriptionName != null) {
+                resources.getQuantityString(
+                    R.plurals.subscription_bundle_added,
+                    result.tunnels.size,
+                    result.subscriptionName,
+                    result.tunnels.size,
+                )
+            } else {
+                getString(R.string.subscription_added, result.tunnels.first().name)
+            }
+            showSnackbar(message)
+            val tunnels = Application.getTunnelManager().getTunnels()
+            binding?.tunnels = tunnels
+            setHeroTunnel(result.tunnels.firstOrNull())
+        } catch (e: Throwable) {
+            showSnackbar(ErrorMessages[e])
+        }
+    }
+
     private fun setHeroTunnel(tunnel: ObservableTunnel?) {
         val changed = heroTunnel != tunnel
         heroTunnel = tunnel
@@ -366,11 +394,20 @@ class TunnelListFragment : BaseFragment() {
     private suspend fun refreshSubscriptionTarget() {
         val binding = binding ?: return
         subscriptionTarget = heroTunnel?.takeIf { Application.getSubscriptionManager().isSubscribed(it.name) }
+        val bundleSummary = heroTunnel?.let { Application.getSubscriptionManager().bundleSummary(it.name) }
         binding.subscriptionRefresh.visibility = if (heroTunnel == null) View.GONE else View.VISIBLE
         binding.subscriptionRefresh.alpha = if (subscriptionTarget == null) 0.62f else 1f
         binding.subscriptionRefresh.contentDescription = getString(
             if (subscriptionTarget == null) R.string.subscription_not_found else R.string.subscription_update
         )
+        binding.subscriptionSummary.visibility = if (bundleSummary == null) View.GONE else View.VISIBLE
+        if (bundleSummary != null) {
+            binding.subscriptionSummaryName.text = bundleSummary.name
+            val formattedExpiry = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+                .format(Date(bundleSummary.expiresAt))
+            binding.subscriptionSummaryExpiry.text = getString(R.string.subscription_expires, formattedExpiry)
+            binding.subscriptionSummary.alpha = if (bundleSummary.enabled) 1f else 0.58f
+        }
     }
 
     private fun updateSubscriptionNow() {

@@ -176,7 +176,12 @@ class SettingsActivity : AppCompatActivity() {
                         refreshRoutingStatus()
                         Toast.makeText(requireContext(), R.string.routing_lists_updated, Toast.LENGTH_LONG).show()
                     } catch (e: Throwable) {
-                        routingListsUpdate.summary = getString(R.string.routing_lists_update_failed, e.localizedMessage ?: e.javaClass.simpleName)
+                        val error = e.localizedMessage ?: e.javaClass.simpleName
+                        routingListsUpdate.summary = if (Application.getRoutingListManager().hasData()) {
+                            getString(R.string.routing_lists_update_failed_using_cache, error)
+                        } else {
+                            getString(R.string.routing_lists_update_failed, error)
+                        }
                     } finally {
                         routingListsUpdate.isEnabled = true
                     }

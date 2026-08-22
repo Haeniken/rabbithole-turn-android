@@ -3,6 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools">
     <data>
+        <import type="android.text.TextUtils" />
         <import type="android.view.View" />
         <import type="com.wireguard.android.backend.Tunnel.State" />
         <import type="com.wireguard.android.model.ObservableTunnel" />
@@ -59,7 +60,7 @@
             android:layout_marginEnd="28dp"
             android:ellipsize="end"
             android:maxLines="1"
-            android:text="@{item.turnSettings != null &amp;&amp; item.turnSettings.enabled ? @string/main_turn_profile : @string/main_wireguard_profile}"
+            android:text="@{item.turnSettings != null &amp;&amp; !TextUtils.isEmpty(item.turnSettings.profileSubtitle) ? item.turnSettings.profileSubtitle : (item.turnSettings != null &amp;&amp; item.turnSettings.enabled ? @string/main_turn_profile : @string/main_wireguard_profile)}"
             android:textColor="@color/rabbit_text_muted"
             android:textSize="11sp"
             tools:text="TURN · защищённый маршрут" />

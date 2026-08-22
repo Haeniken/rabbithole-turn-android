@@ -24,6 +24,7 @@ data class TurnSettings(
     val watchdogTimeout: Int = 0,
     val useWrap: Boolean = false,
     val wrapKeyHex: String = "",
+    val profileSubtitle: String = "",
 ) {
     fun toComments(): List<String> {
         val lines = mutableListOf(
@@ -46,6 +47,9 @@ data class TurnSettings(
             lines.add("#@wgt:UseWrap = true")
             lines.add("#@wgt:WrapKeyHex = $wrapKeyHex")
         }
+        if (profileSubtitle.isNotBlank()) {
+            lines.add("#@rhv:ProfileSubtitle = $profileSubtitle")
+        }
         return lines
     }
 
@@ -65,10 +69,18 @@ data class TurnSettings(
             var watchdogTimeout = 0
             var useWrap = false
             var wrapKeyHex = ""
+            var profileSubtitle = ""
             var noDtlsLegacy = false
             var foundAny = false
 
             for (line in comments) {
+                if (line.startsWith(PROFILE_SUBTITLE_PREFIX, ignoreCase = true)) {
+                    profileSubtitle = line.substringAfter('=', "")
+                        .trim()
+                        .filterNot { it.isISOControl() }
+                        .take(MAX_PROFILE_SUBTITLE_LENGTH)
+                    continue
+                }
                 if (!line.startsWith("#@wgt:")) continue
                 foundAny = true
                 val parts = line.substring(6).split("=", limit = 2)
@@ -100,7 +112,23 @@ data class TurnSettings(
                 peerType = if (noDtlsLegacy) "wireguard" else "proxy_v2"
             }
 
-            return if (foundAny) TurnSettings(enabled, peer, vkLink, mode, streams, useUdp, localPort, turnIp, turnPort, peerType, streamsPerCred, watchdogTimeout, useWrap, wrapKeyHex) else null
+            return if (foundAny) TurnSettings(
+                enabled = enabled,
+                peer = peer,
+                vkLink = vkLink,
+                mode = mode,
+                streams = streams,
+                useUdp = useUdp,
+                localPort = localPort,
+                turnIp = turnIp,
+                turnPort = turnPort,
+                peerType = peerType,
+                streamsPerCred = streamsPerCred,
+                watchdogTimeout = watchdogTimeout,
+                useWrap = useWrap,
+                wrapKeyHex = wrapKeyHex,
+                profileSubtitle = profileSubtitle,
+            ) else null
         }
 
         fun validate(settings: TurnSettings): TurnSettings {
@@ -133,5 +161,8 @@ data class TurnSettings(
 
             return settings
         }
+
+        private const val PROFILE_SUBTITLE_PREFIX = "#@rhv:ProfileSubtitle"
+        private const val MAX_PROFILE_SUBTITLE_LENGTH = 48
     }
 }

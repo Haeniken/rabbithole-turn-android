@@ -42,9 +42,19 @@ class SubscriptionDialogFragment : DialogFragment() {
                 lifecycleScope.launch {
                     try {
                         val result = Application.getSubscriptionManager().add(url)
+                        val resultMessage = if (result.subscriptionName != null) {
+                            resources.getQuantityString(
+                                R.plurals.subscription_bundle_added,
+                                result.tunnels.size,
+                                result.subscriptionName,
+                                result.tunnels.size,
+                            )
+                        } else {
+                            getString(R.string.subscription_added, result.tunnels.first().name)
+                        }
                         setFragmentResult(
                             REQUEST_KEY_SUBSCRIPTION_RESULT,
-                            bundleOf(RESULT_MESSAGE to getString(R.string.subscription_added, result.tunnel.name)),
+                            bundleOf(RESULT_MESSAGE to resultMessage),
                         )
                         dismiss()
                     } catch (e: Throwable) {

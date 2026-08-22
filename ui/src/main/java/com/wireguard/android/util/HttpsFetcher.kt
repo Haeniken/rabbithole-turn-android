@@ -21,6 +21,7 @@ object HttpsFetcher {
         val etag: String?,
         val lastModified: String?,
         val contentDisposition: String?,
+        val contentType: String?,
     )
 
     suspend fun get(
@@ -38,7 +39,10 @@ object HttpsFetcher {
                 connection.connectTimeout = CONNECT_TIMEOUT_MS
                 connection.readTimeout = READ_TIMEOUT_MS
                 connection.requestMethod = "GET"
-                connection.setRequestProperty("Accept", "text/plain, application/wireguard-profile, application/octet-stream")
+                connection.setRequestProperty(
+                    "Accept",
+                    "application/vnd.rabbithole.turn-bundle+json; version=1, text/plain, application/wireguard-profile, application/octet-stream",
+                )
                 connection.setRequestProperty("User-Agent", Application.USER_AGENT)
                 if (!etag.isNullOrBlank()) connection.setRequestProperty("If-None-Match", etag)
                 if (!lastModified.isNullOrBlank()) connection.setRequestProperty("If-Modified-Since", lastModified)
@@ -75,6 +79,7 @@ object HttpsFetcher {
                     connection.getHeaderField("ETag"),
                     connection.getHeaderField("Last-Modified"),
                     connection.getHeaderField("Content-Disposition"),
+                    connection.contentType,
                 )
             } finally {
                 connection.disconnect()

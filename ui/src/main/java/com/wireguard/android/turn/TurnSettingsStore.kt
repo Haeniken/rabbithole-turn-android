@@ -50,6 +50,7 @@ class TurnSettingsStore(private val context: Context) {
                     watchdogTimeout = json.optInt("watchdogTimeout", 0),
                     useWrap = json.optBoolean("useWrap", false),
                     wrapKeyHex = json.optString("wrapKeyHex", ""),
+                    profileSubtitle = json.optString("profileSubtitle", ""),
                 )
                 settings
             }
@@ -83,6 +84,7 @@ class TurnSettingsStore(private val context: Context) {
             .put("watchdogTimeout", settings.watchdogTimeout)
             .put("useWrap", settings.useWrap)
             .put("wrapKeyHex", settings.wrapKeyHex)
+            .put("profileSubtitle", settings.profileSubtitle)
 
         file.parentFile?.mkdirs()
         FileOutputStream(file, false).use { stream ->

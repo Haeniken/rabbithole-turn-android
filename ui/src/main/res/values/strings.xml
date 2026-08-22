@@ -105,12 +105,20 @@
     <string name="subscription_dialog_message">The configuration will be checked automatically every 12 hours. Only HTTPS links are accepted.</string>
     <string name="subscription_url_required">Enter a subscription URL</string>
     <string name="subscription_added">Subscription “%s” added</string>
+    <plurals name="subscription_bundle_added">
+        <item quantity="one">Subscription “%1$s” added: %2$d connection</item>
+        <item quantity="other">Subscription “%1$s” added: %2$d connections</item>
+    </plurals>
     <string name="subscription_add_http_error">Unable to add subscription: server returned HTTP %d</string>
     <string name="subscription_update_http_error">Unable to update subscription: server returned HTTP %d</string>
     <string name="subscription_not_found">This tunnel is not linked to a subscription</string>
     <string name="subscription_tunnel_missing">The tunnel linked to this subscription no longer exists</string>
     <string name="subscription_name_exhausted">Unable to select a unique name for the subscription</string>
     <string name="subscription_empty_config">The subscription returned an empty configuration</string>
+    <string name="subscription_bundle_already_added">This subscription bundle has already been added</string>
+    <string name="subscription_bundle_name_invalid">The bundle has no valid common subscription name</string>
+    <string name="subscription_bundle_profiles_changed">The server returned a different set of bundle profiles. Add the subscription again.</string>
+    <string name="subscription_format_changed">The server returned a different subscription format</string>
     <string name="subscription_disabled_error">This subscription was disabled by the provider. Use “Update subscription” after it is enabled again.</string>
     <string name="subscription_metadata_invalid">Subscription data is damaged. Add the subscription again before connecting.</string>
     <string name="subscription_update">Update subscription</string>
@@ -119,6 +127,7 @@
     <string name="subscription_updated">Subscription configuration updated</string>
     <string name="subscription_disabled">Subscription was disabled by the provider; the tunnel has been stopped</string>
     <string name="subscription_enabled">Subscription is active again</string>
+    <string name="subscription_expires">Valid until %s</string>
     <string name="main_secure_route">Private route</string>
     <string name="main_no_tunnel">No connection selected</string>
     <string name="main_choose_profile">Add or select a connection below</string>
@@ -259,6 +268,7 @@
     <string name="routing_lists_updating">Downloading and validating GeoIP and GeoSite…</string>
     <string name="routing_lists_updated">Routing geodata updated</string>
     <string name="routing_lists_update_failed">Update failed: %s</string>
+    <string name="routing_lists_update_failed_using_cache">Update failed: %s. The previously downloaded geodata remains active.</string>
     <string name="routing_lists_missing_error">GeoIP and GeoSite are missing. Download the routing data before starting this profile.</string>
     <string name="routing_lists_invalid_error">The saved GeoIP or GeoSite data is invalid. Download it again before starting this profile.</string>
     <string name="routing_lists_download_failed_error">GeoIP and GeoSite could not be downloaded. The tunnel was not started.</string>

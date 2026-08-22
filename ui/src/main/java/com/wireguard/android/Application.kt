@@ -138,7 +138,9 @@ class Application : android.app.Application() {
         }
         
         tunnelManager.onCreate()
-        // Geodata is downloaded only after a ru-direct profile is first used or by manual request.
+        // App and geodata maintenance start together. Missing geodata is still downloaded only
+        // on the first ru-direct connection (or by explicit manual request).
+        RoutingListUpdateWorker.scheduleStartup(applicationContext)
         if (routingListManager.hasData())
             RoutingListUpdateWorker.schedulePeriodic(applicationContext)
         SubscriptionUpdateWorker.schedule(applicationContext)

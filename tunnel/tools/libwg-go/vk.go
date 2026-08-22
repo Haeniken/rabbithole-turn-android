@@ -98,7 +98,17 @@ func fetchVkCreds(ctx context.Context, link string) (string, string, string, err
 
 	profile := getCaptchaProfile()
 
-	var lastErr error
+	// VK Calls uses a separate anonymous API flow which normally does not
+	// trigger the browser captcha gate used by calls.getAnonymousToken. Keep
+	// the legacy path below as a fallback in case VK changes or disables it.
+	user, pass, addr, lastErr := getVKCallsTokenChain(ctx, link, client, profile)
+	if lastErr == nil {
+		captchaBackoff.reset()
+		turnLog("[VK Auth] Credentials received via VK Calls anonymous flow")
+		return user, pass, addr, nil
+	}
+	turnLog("[VK Auth] VK Calls anonymous flow failed, using legacy fallback: %v", lastErr)
+
 	for _, creds := range vkCredentialsList {
 		user, pass, addr, err := getTokenChain(ctx, link, creds, client, profile)
 		if err == nil {

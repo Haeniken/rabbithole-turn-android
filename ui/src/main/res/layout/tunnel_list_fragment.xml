@@ -356,7 +356,44 @@
                 android:background="@drawable/rabbit_accent_divider"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@id/connections_title" />
+                app:layout_constraintTop_toBottomOf="@id/subscription_summary" />
+
+            <LinearLayout
+                android:id="@+id/subscription_summary"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="5dp"
+                android:layout_marginTop="8dp"
+                android:layout_marginEnd="5dp"
+                android:orientation="vertical"
+                android:visibility="gone"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/connections_title"
+                tools:visibility="visible">
+
+                <TextView
+                    android:id="@+id/subscription_summary_name"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:fontFamily="sans-serif-medium"
+                    android:maxLines="1"
+                    android:textColor="@color/rabbit_text_primary"
+                    android:textSize="13sp"
+                    tools:text="haeniken" />
+
+                <TextView
+                    android:id="@+id/subscription_summary_expiry"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textColor="@color/rabbit_text_secondary"
+                    android:textSize="11sp"
+                    tools:text="Действует до 30.01.2100" />
+            </LinearLayout>
 
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/tunnel_list"

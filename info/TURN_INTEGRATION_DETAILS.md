@@ -37,7 +37,8 @@ TURN relay → transport proxy → WireGuard endpoint
 - `tunnel/src/main/java/com/wireguard/android/backend/TurnBackend.java` — JNI-мост для transport hub и CAPTCHA callback.
 - `tunnel/tools/libwg-go/turn-client.go` — мультипоточный TURN/DTLS transport.
 - `tunnel/tools/libwg-go/credentials.go` — ограниченный кэш credentials.
-- `tunnel/tools/libwg-go/vk.go` — получение credentials по ссылке на звонок.
+- `tunnel/tools/libwg-go/vk_calls.go` — основной анонимный VK Calls flow без браузерной CAPTCHA.
+- `tunnel/tools/libwg-go/vk.go` — совместимый резервный flow получения credentials.
 - `tunnel/tools/libwg-go/vk_captcha.go` и `slider_captcha.go` — автоматические варианты CAPTCHA.
 - `tunnel/tools/libwg-go/stream_pool.go` — управление набором готовых потоков.
 - `tunnel/tools/libwg-go/turn-dns-resolver.go` — DNS-запросы через защищённые внешние сокеты.
@@ -50,7 +51,7 @@ TURN relay → transport proxy → WireGuard endpoint
 4. `GoBackend` создаёт TUN-интерфейс и регистрирует `VpnService` в JNI.
 5. Внешние WireGuard и TURN-сокеты исключаются из маршрута приложения через `VpnService.protect()`.
 6. `TurnProxyManager` запускает transport hub.
-7. Hub получает credentials, создаёт несколько TURN allocation и выполняет DTLS handshake.
+7. Hub сначала получает credentials через анонимный API VK Calls, создаёт несколько TURN allocation и выполняет DTLS handshake.
 8. После готовности транспорта WireGuard-пакеты распределяются между доступными потоками.
 9. При смене физической сети DNS/HTTP-состояние сбрасывается, а транспорт восстанавливается.
 
@@ -58,7 +59,7 @@ TURN relay → transport proxy → WireGuard endpoint
 
 ## Поддерживаемая авторизация
 
-Пользовательский сценарий использует `Mode = vk_link`: credentials запрашиваются по индивидуальной ссылке на звонок. Другие исторические способы получения credentials не считаются поддерживаемыми и не документируются.
+Пользовательский сценарий использует `Mode = vk_link`: credentials запрашиваются по индивидуальной ссылке на звонок. Сначала клиент использует нативный анонимный flow VK Calls (`api.vk.me`), который не требует браузерной CAPTCHA. Если внешний сервис отвергает или изменяет этот flow, клиент переходит к прежней совместимой цепочке с автоматической и ручной проверкой. Другие исторические способы получения credentials не считаются поддерживаемыми и не документируются.
 
 ## Режимы transport proxy
 
@@ -96,7 +97,7 @@ WRAP добавляет симметричную защиту полезной �
 
 ## CAPTCHA
 
-При ответе внешнего API о необходимости проверки клиент:
+В обычном режиме основной анонимный flow VK Calls не открывает CAPTCHA. Если он недоступен, клиент переходит к совместимой цепочке; при ответе внешнего API о необходимости проверки клиент:
 
 1. пробует поддерживаемую автоматическую проверку;
 2. при наличии slider-варианта пробует локальную обработку;

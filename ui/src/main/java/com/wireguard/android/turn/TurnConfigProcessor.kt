@@ -33,7 +33,11 @@ object TurnConfigProcessor {
                 peer.preSharedKey.ifPresent { builder.setPreSharedKey(it) }
 
                 // Add existing extra lines (excluding our own to avoid duplicates)
-                val filteredLines = peer.extraLines.filter { !it.startsWith("#@wgt:") && !it.contains("TURN extensions") }
+                val filteredLines = peer.extraLines.filter {
+                    !it.startsWith("#@wgt:") &&
+                        !it.startsWith("#@rhv:ProfileSubtitle", ignoreCase = true) &&
+                        !it.contains("TURN extensions")
+                }
                 builder.addExtraLines(filteredLines)
 
                 // Add TURN settings as comments

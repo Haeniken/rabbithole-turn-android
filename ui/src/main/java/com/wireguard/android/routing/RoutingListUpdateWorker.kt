@@ -9,8 +9,11 @@ import android.util.Log
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.BackoffPolicy
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.wireguard.android.Application
@@ -20,7 +23,10 @@ class RoutingListUpdateWorker(
     appContext: Context,
     workerParams: WorkerParameters,
 ) : CoroutineWorker(appContext, workerParams) {
-    override suspend fun doWork(): Result = try {
+    override suspend fun doWork(): Result = if (!Application.getRoutingListManager().hasData()) {
+        // The first download belongs to the first ru-direct connection (or an explicit manual request).
+        Result.success()
+    } else try {
         Application.getRoutingListManager().update()
         Result.success()
     } catch (e: Throwable) {
@@ -31,6 +37,21 @@ class RoutingListUpdateWorker(
     companion object {
         private const val TAG = "RabbitHole/RoutingWorker"
         private const val PERIODIC_WORK = "routing-lists-periodic"
+        private const val STARTUP_WORK = "routing-lists-startup"
+
+        fun scheduleStartup(context: Context) {
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build()
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                STARTUP_WORK,
+                ExistingWorkPolicy.KEEP,
+                OneTimeWorkRequestBuilder<RoutingListUpdateWorker>()
+                    .setConstraints(constraints)
+                    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.HOURS)
+                    .build(),
+            )
+        }
 
         fun schedulePeriodic(context: Context) {
             val constraints = Constraints.Builder()
@@ -41,6 +62,7 @@ class RoutingListUpdateWorker(
                 ExistingPeriodicWorkPolicy.UPDATE,
                 PeriodicWorkRequestBuilder<RoutingListUpdateWorker>(24, TimeUnit.HOURS)
                     .setConstraints(constraints)
+                    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.HOURS)
                     .build(),
             )
         }

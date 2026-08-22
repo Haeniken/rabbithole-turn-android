@@ -22,6 +22,10 @@ class SubscriptionStore(private val context: Context) {
         val contentHash: String? = null,
         val enabled: Boolean = true,
         val lastCheckedAt: Long = 0,
+        val bundleId: String? = null,
+        val profileId: String? = null,
+        val subscriptionName: String? = null,
+        val expiresAt: Long? = null,
     )
 
     fun load(tunnelName: String): Record? {
@@ -37,6 +41,10 @@ class SubscriptionStore(private val context: Context) {
                 json.optString("contentHash").ifBlank { null },
                 json.optBoolean("enabled", true),
                 json.optLong("lastCheckedAt", 0),
+                json.optString("bundleId").ifBlank { null },
+                json.optString("profileId").ifBlank { null },
+                json.optString("subscriptionName").ifBlank { null },
+                json.optLong("expiresAt", 0).takeIf { it > 0 },
             )
         } catch (e: Throwable) {
             Log.e(TAG, "Unable to read subscription metadata for $tunnelName", e)
@@ -59,6 +67,10 @@ class SubscriptionStore(private val context: Context) {
             .put("contentHash", record.contentHash ?: "")
             .put("enabled", record.enabled)
             .put("lastCheckedAt", record.lastCheckedAt)
+            .put("bundleId", record.bundleId ?: "")
+            .put("profileId", record.profileId ?: "")
+            .put("subscriptionName", record.subscriptionName ?: "")
+            .put("expiresAt", record.expiresAt ?: 0)
         temporary.writeText(json.toString(), StandardCharsets.UTF_8)
         try {
             Os.rename(temporary.path, target.path)
@@ -81,6 +93,15 @@ class SubscriptionStore(private val context: Context) {
 
     fun isSubscribed(tunnelName: String): Boolean = fileFor(tunnelName).isFile
 
+    fun recordsForBundle(bundleId: String): List<Record> = enumerate()
+        .filter { it.bundleId == bundleId }
+
+    fun summaryForTunnel(tunnelName: String): BundleSummary? {
+        val record = load(tunnelName) ?: return null
+        if (record.bundleId == null || record.subscriptionName == null || record.expiresAt == null) return null
+        return BundleSummary(record.bundleId, record.subscriptionName, record.expiresAt, record.enabled)
+    }
+
     fun requireEnabled(tunnelName: String) {
         if (!fileFor(tunnelName).isFile) return
         val record = load(tunnelName)
@@ -95,4 +116,11 @@ class SubscriptionStore(private val context: Context) {
         private const val TAG = "RabbitHole/SubscriptionStore"
         private const val SUFFIX = ".subscription.json"
     }
+
+    data class BundleSummary(
+        val bundleId: String,
+        val name: String,
+        val expiresAt: Long,
+        val enabled: Boolean,
+    )
 }
