@@ -32,6 +32,7 @@ import com.wireguard.android.turn.TurnSettings
 import com.wireguard.android.turn.TurnSettingsStore
 import com.wireguard.android.subscription.SubscriptionStore
 import com.wireguard.android.util.ErrorMessages
+import com.wireguard.android.util.GlobalAppExclusions
 import com.wireguard.android.util.UserKnobs
 import com.wireguard.android.util.applicationScope
 import com.wireguard.config.Config
@@ -298,6 +299,12 @@ class TunnelManager(
             val shouldStopTurn = state == Tunnel.State.DOWN || (state == Tunnel.State.TOGGLE && tunnel.state == Tunnel.State.UP)
 
             if (shouldStartTurn) subscriptionStore.requireEnabled(tunnel.name)
+            if (shouldStartTurn && backend is GoBackend) {
+                val globalExclusions = withContext(Dispatchers.IO) {
+                    GlobalAppExclusions.load(Application.getPreferencesDataStore())
+                }
+                backend.setGloballyExcludedApplications(globalExclusions)
+            }
 
             suspend fun cleanupFailedTurnStartup(goBackend: GoBackend) {
                 withContext(Dispatchers.IO) {

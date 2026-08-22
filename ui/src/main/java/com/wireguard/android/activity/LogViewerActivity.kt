@@ -336,17 +336,7 @@ class LogViewerActivity : AppCompatActivity() {
     private fun String.containsAny(vararg needles: String) = needles.any(::contains)
 
     private fun effectiveLevel(line: LogLine): String {
-        if (line.level != "I") return line.level
-        val message = line.msg.lowercase(Locale.ROOT)
-        if (
-            (message.contains("[dns] server") && message.contains(" failed:")) ||
-            message.contains("getcallpreview request failed:") ||
-            message.contains("auto captcha failed") ||
-            message.contains("watchdog recycling stream") ||
-            message.contains("use of closed network connection") ||
-            message.contains("read/write on closed pipe")
-        ) return "W"
-        return if (message.containsAny(" error:", " failed:", " failed ", "exception", "timed out", "timeout")) "E" else line.level
+        return effectiveLogLevel(line.level, line.msg)
     }
 
     private fun matchesFilter(line: LogLine): Boolean = when (selectedFilter) {

@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.content.pm.PackageManager.PackageInfoFlags
 import android.os.Build
 import android.os.Bundle
+import android.view.View
 import android.widget.Button
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -35,6 +36,7 @@ class AppListDialogFragment : DialogFragment() {
     private val appData = ObservableKeyedArrayList<String, ApplicationData>()
     private var currentlySelectedApps = emptyList<String>()
     private var initiallyExcluded = false
+    private var excludeOnly = false
     private var button: Button? = null
     private var tabs: TabLayout? = null
 
@@ -48,6 +50,7 @@ class AppListDialogFragment : DialogFragment() {
                     val packageInfos = getPackagesHoldingPermissions(pm, arrayOf(Manifest.permission.INTERNET))
                     packageInfos.forEach {
                         val packageName = it.packageName
+                        if (excludeOnly && packageName == activity.packageName) return@forEach
                         val appInfo = it.applicationInfo ?: return@forEach
                         val appData =
                             ApplicationData(appInfo.loadIcon(pm), appInfo.loadLabel(pm).toString(), packageName, currentlySelectedApps.contains(packageName))
@@ -81,6 +84,7 @@ class AppListDialogFragment : DialogFragment() {
         super.onCreate(savedInstanceState)
         currentlySelectedApps = (arguments?.getStringArrayList(KEY_SELECTED_APPS) ?: emptyList())
         initiallyExcluded = arguments?.getBoolean(KEY_IS_EXCLUDED) ?: true
+        excludeOnly = arguments?.getBoolean(KEY_EXCLUDE_ONLY) ?: false
     }
 
     private fun getPackagesHoldingPermissions(pm: PackageManager, permissions: Array<String>): List<PackageInfo> {
@@ -95,7 +99,9 @@ class AppListDialogFragment : DialogFragment() {
     private fun setButtonText() {
         val numSelected = appData.count { it.isSelected }
         button?.text = if (numSelected == 0)
-            getString(R.string.use_all_applications)
+            getString(if (excludeOnly) R.string.global_app_exclusions_none else R.string.use_all_applications)
+        else if (excludeOnly)
+            resources.getQuantityString(R.plurals.exclude_n_applications, numSelected, numSelected)
         else when (tabs?.selectedTabPosition) {
             0 -> resources.getQuantityString(R.plurals.exclude_n_applications, numSelected, numSelected)
             1 -> resources.getQuantityString(R.plurals.include_n_applications, numSelected, numSelected)
@@ -108,7 +114,9 @@ class AppListDialogFragment : DialogFragment() {
         val binding = AppListDialogFragmentBinding.inflate(requireActivity().layoutInflater, null, false)
         binding.executePendingBindings()
         alertDialogBuilder.setView(binding.root)
+        if (excludeOnly) alertDialogBuilder.setTitle(R.string.global_app_exclusions_title)
         tabs = binding.tabs
+        binding.tabs.visibility = if (excludeOnly) View.GONE else View.VISIBLE
         tabs?.apply {
             selectTab(binding.tabs.getTabAt(if (initiallyExcluded) 0 else 1))
             addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
@@ -147,7 +155,7 @@ class AppListDialogFragment : DialogFragment() {
         setFragmentResult(
             REQUEST_SELECTION, bundleOf(
                 KEY_SELECTED_APPS to selectedApps.toTypedArray(),
-                KEY_IS_EXCLUDED to (tabs?.selectedTabPosition == 0)
+                KEY_IS_EXCLUDED to (excludeOnly || tabs?.selectedTabPosition == 0)
             )
         )
         dismiss()
@@ -156,12 +164,18 @@ class AppListDialogFragment : DialogFragment() {
     companion object {
         const val KEY_SELECTED_APPS = "selected_apps"
         const val KEY_IS_EXCLUDED = "is_excluded"
+        private const val KEY_EXCLUDE_ONLY = "exclude_only"
         const val REQUEST_SELECTION = "request_selection"
 
-        fun newInstance(selectedApps: ArrayList<String?>?, isExcluded: Boolean): AppListDialogFragment {
+        fun newInstance(
+            selectedApps: ArrayList<String?>?,
+            isExcluded: Boolean,
+            excludeOnly: Boolean = false,
+        ): AppListDialogFragment {
             val extras = Bundle()
             extras.putStringArrayList(KEY_SELECTED_APPS, selectedApps)
             extras.putBoolean(KEY_IS_EXCLUDED, isExcluded)
+            extras.putBoolean(KEY_EXCLUDE_ONLY, excludeOnly)
             val fragment = AppListDialogFragment()
             fragment.arguments = extras
             return fragment

@@ -288,9 +288,11 @@
     <string name="routing_lists_summary">GeoIP и GeoSite используются только профилями, где запрошен прямой маршрут для России</string>
     <string name="routing_geoip_url_title">Ссылка на GeoIP</string>
     <string name="routing_geosite_url_title">Ссылка на GeoSite</string>
+    <string name="routing_geoip_categories_title">Категории GeoIP напрямую</string>
+    <string name="routing_geosite_categories_title">Категории GeoSite напрямую</string>
     <string name="routing_lists_update">Загрузить или обновить геоданные</string>
     <string name="routing_lists_never_updated">Геоданные ещё не загружены</string>
-    <string name="routing_lists_status">Обновлено %1$s · RU CIDR: %2$d · правил CATEGORY-RU: %3$d · найдено адресов: %4$d</string>
+    <string name="routing_lists_status">Обновлено %1$s · CIDR: %2$d · правил доменов: %3$d · найдено адресов: %4$d</string>
     <string name="routing_lists_updating">Загрузка и проверка GeoIP и GeoSite…</string>
     <string name="routing_lists_updated">Геоданные маршрутизации обновлены</string>
     <string name="routing_lists_update_failed">Ошибка обновления: %s</string>
@@ -300,6 +302,15 @@
     <string name="routing_lists_download_failed_error">Не удалось загрузить GeoIP и GeoSite. Туннель не запущен.</string>
     <string name="routing_lists_download_action">Загрузить</string>
     <string name="routing_requires_go_backend">Для прямой маршрутизации России требуется пользовательский VPN-бэкенд Android.</string>
+    <string name="global_app_exclusions_title">Приложения вне туннеля</string>
+    <string name="global_app_exclusions_summary_none">Все приложения используют выбранный туннель</string>
+    <string name="global_app_exclusions_none">Не исключать приложения</string>
+    <plurals name="global_app_exclusions_count">
+        <item quantity="one">%d приложение всегда использует обычное подключение</item>
+        <item quantity="few">%d приложения всегда используют обычное подключение</item>
+        <item quantity="many">%d приложений всегда используют обычное подключение</item>
+        <item quantity="other">%d приложения всегда используют обычное подключение</item>
+    </plurals>
     <string name="shell_exit_status_read_error">Shell не может прочитать статус выхода</string>
     <string name="shell_marker_count_error">Shell ожидает 4 маркера, получено %d</string>
     <string name="shell_start_error">Не удалось запустить Shell: %d</string>

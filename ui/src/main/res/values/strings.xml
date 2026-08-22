@@ -264,9 +264,11 @@
     <string name="routing_lists_summary">GeoIP and GeoSite data used only by profiles that request Russian direct routing</string>
     <string name="routing_geoip_url_title">GeoIP data URL</string>
     <string name="routing_geosite_url_title">GeoSite data URL</string>
+    <string name="routing_geoip_categories_title">Direct GeoIP categories</string>
+    <string name="routing_geosite_categories_title">Direct GeoSite categories</string>
     <string name="routing_lists_update">Download or update geodata</string>
     <string name="routing_lists_never_updated">Geodata has not been downloaded yet</string>
-    <string name="routing_lists_status">Updated %1$s · RU CIDRs: %2$d · CATEGORY-RU rules: %3$d · resolved addresses: %4$d</string>
+    <string name="routing_lists_status">Updated %1$s · CIDRs: %2$d · domain rules: %3$d · resolved addresses: %4$d</string>
     <string name="routing_lists_updating">Downloading and validating GeoIP and GeoSite…</string>
     <string name="routing_lists_updated">Routing geodata updated</string>
     <string name="routing_lists_update_failed">Update failed: %s</string>
@@ -276,6 +278,13 @@
     <string name="routing_lists_download_failed_error">GeoIP and GeoSite could not be downloaded. The tunnel was not started.</string>
     <string name="routing_lists_download_action">Download</string>
     <string name="routing_requires_go_backend">Russian direct routing requires the Android userspace VPN backend.</string>
+    <string name="global_app_exclusions_title">Apps outside the tunnel</string>
+    <string name="global_app_exclusions_summary_none">All apps use the selected tunnel</string>
+    <string name="global_app_exclusions_none">Do not exclude apps</string>
+    <plurals name="global_app_exclusions_count">
+        <item quantity="one">%d app always uses the regular connection</item>
+        <item quantity="other">%d apps always use the regular connection</item>
+    </plurals>
     <string name="shell_exit_status_read_error">Shell cannot read exit status</string>
     <string name="shell_marker_count_error">Shell expected 4 markers, received %d</string>
     <string name="shell_start_error">Shell failed to start: %d</string>

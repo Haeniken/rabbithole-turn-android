@@ -22,10 +22,12 @@ import com.wireguard.android.Application
 import com.wireguard.android.QuickTileService
 import com.wireguard.android.R
 import com.wireguard.android.backend.WgQuickBackend
+import com.wireguard.android.fragment.AppListDialogFragment
 import com.wireguard.android.preference.PreferencesPreferenceDataStore
 import com.wireguard.android.routing.RoutingListUpdateWorker
 import com.wireguard.android.updater.Updater
 import com.wireguard.android.util.AdminKnobs
+import com.wireguard.android.util.GlobalAppExclusions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -185,6 +187,54 @@ class SettingsActivity : AppCompatActivity() {
                     } finally {
                         routingListsUpdate.isEnabled = true
                     }
+                }
+                true
+            }
+            val globalAppExclusions = preferenceManager.findPreference<Preference>("global_app_exclusions")
+            fun refreshGlobalAppExclusions(selected: Set<String>) {
+                globalAppExclusions?.summary = if (selected.isEmpty()) {
+                    getString(R.string.global_app_exclusions_summary_none)
+                } else {
+                    resources.getQuantityString(
+                        R.plurals.global_app_exclusions_count,
+                        selected.size,
+                        selected.size,
+                    )
+                }
+            }
+            lifecycleScope.launch {
+                refreshGlobalAppExclusions(
+                    withContext(Dispatchers.IO) {
+                        GlobalAppExclusions.load(Application.getPreferencesDataStore())
+                    },
+                )
+            }
+            childFragmentManager.setFragmentResultListener(
+                AppListDialogFragment.REQUEST_SELECTION,
+                this,
+            ) { _, bundle ->
+                val selected = bundle.getStringArray(AppListDialogFragment.KEY_SELECTED_APPS)
+                    .orEmpty()
+                    .filterNot { it == requireContext().packageName }
+                    .toSet()
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) {
+                        GlobalAppExclusions.save(Application.getPreferencesDataStore(), selected)
+                    }
+                    refreshGlobalAppExclusions(selected)
+                }
+            }
+            globalAppExclusions?.setOnPreferenceClickListener {
+                lifecycleScope.launch {
+                    val selected = withContext(Dispatchers.IO) {
+                        GlobalAppExclusions.load(Application.getPreferencesDataStore())
+                    }
+                    val nullableSelection = ArrayList<String?>(selected.size).apply { addAll(selected) }
+                    AppListDialogFragment.newInstance(
+                        nullableSelection,
+                        isExcluded = true,
+                        excludeOnly = true,
+                    ).show(childFragmentManager, "global-app-exclusions")
                 }
                 true
             }

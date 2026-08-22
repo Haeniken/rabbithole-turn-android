@@ -48,7 +48,7 @@ TURN relay → transport proxy → WireGuard endpoint
 1. Пользователь выбирает профиль и нажимает призматическую кнопку.
 2. Клиент проверяет, нужны ли профилю GeoIP/GeoSite. Если нужны и файлов нет, сначала выполняется загрузка.
 3. Android запрашивает разрешение на создание системного туннеля при необходимости.
-4. `GoBackend` создаёт TUN-интерфейс и регистрирует `VpnService` в JNI.
+4. `GoBackend` применяет глобальный локальный список приложений вне туннеля, создаёт TUN-интерфейс и регистрирует `VpnService` в JNI.
 5. Внешние WireGuard и TURN-сокеты исключаются из маршрута приложения через `VpnService.protect()`.
 6. `TurnProxyManager` запускает transport hub.
 7. Hub сначала получает credentials через анонимный API VK Calls, создаёт несколько TURN allocation и выполняет DTLS handshake.

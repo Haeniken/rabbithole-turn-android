@@ -32,7 +32,17 @@ import java.net.InetAddress
 import java.nio.charset.StandardCharsets
 import java.util.Locale
 
-/** Downloads and validates the GeoIP/GeoSite data used by ru-direct profiles. */
+internal fun parseRoutingCategories(raw: String?, defaults: List<String>): List<String> {
+    val categories = raw
+        ?.split(Regex("[,;\\s]+"))
+        ?.map(String::trim)
+        ?.filter(String::isNotEmpty)
+        ?.distinctBy { it.lowercase(Locale.ROOT) }
+        .orEmpty()
+    return categories.ifEmpty { defaults }
+}
+
+/** Downloads and validates the GeoIP/GeoSite data used by direct-routing profiles. */
 class RoutingListManager(
     private val context: Context,
     private val preferences: DataStore<Preferences>,
@@ -52,16 +62,28 @@ class RoutingListManager(
         val currentPreferences = preferences.data.first()
         val geoIpUrl = currentPreferences[GEOIP_URL_KEY]?.ifBlank { null } ?: DEFAULT_GEOIP_URL
         val geoSiteUrl = currentPreferences[GEOSITE_URL_KEY]?.ifBlank { null } ?: DEFAULT_GEOSITE_URL
+        val geoIpCategories = parseRoutingCategories(
+            currentPreferences[GEOIP_CATEGORIES_KEY],
+            DEFAULT_GEOIP_CATEGORIES,
+        )
+        val geoSiteCategories = parseRoutingCategories(
+            currentPreferences[GEOSITE_CATEGORIES_KEY],
+            DEFAULT_GEOSITE_CATEGORIES,
+        )
 
         val geoIpResponse = HttpsFetcher.get(geoIpUrl, MAX_GEOIP_BYTES)
         if (geoIpResponse.status != 200)
             throw IOException("GeoIP server returned HTTP ${geoIpResponse.status}")
-        val cidrs = V2RayGeoDataParser.parseIpCategory(geoIpResponse.body, GEOIP_CATEGORY).distinct()
+        val cidrs = geoIpCategories
+            .flatMap { V2RayGeoDataParser.parseIpCategory(geoIpResponse.body, it) }
+            .distinct()
 
         val geoSiteResponse = HttpsFetcher.get(geoSiteUrl, MAX_GEOSITE_BYTES)
         if (geoSiteResponse.status != 200)
             throw IOException("GeoSite server returned HTTP ${geoSiteResponse.status}")
-        val domainRules = V2RayGeoDataParser.parseDomainCategory(geoSiteResponse.body, GEOSITE_CATEGORY).distinct()
+        val domainRules = geoSiteCategories
+            .flatMap { V2RayGeoDataParser.parseDomainCategory(geoSiteResponse.body, it) }
+            .distinct()
         val resolvedAddresses = resolveDomains(domainRules)
 
         rootDirectory.mkdirs()
@@ -262,8 +284,10 @@ class RoutingListManager(
         const val DEFAULT_GEOSITE_URL = "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat"
         val GEOIP_URL_KEY = stringPreferencesKey("routing_geoip_url")
         val GEOSITE_URL_KEY = stringPreferencesKey("routing_geosite_url")
-        private const val GEOIP_CATEGORY = "RU"
-        private const val GEOSITE_CATEGORY = "CATEGORY-RU"
+        val GEOIP_CATEGORIES_KEY = stringPreferencesKey("routing_geoip_categories")
+        val GEOSITE_CATEGORIES_KEY = stringPreferencesKey("routing_geosite_categories")
+        val DEFAULT_GEOIP_CATEGORIES = listOf("RU")
+        val DEFAULT_GEOSITE_CATEGORIES = listOf("CATEGORY-RU")
         private const val MAX_GEOIP_BYTES = 32 * 1024 * 1024
         private const val MAX_GEOSITE_BYTES = 32 * 1024 * 1024
         private const val DNS_CONCURRENCY = 24

@@ -28,6 +28,7 @@ import java.net.InetAddress;
 import java.util.Collections;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -45,6 +46,9 @@ import androidx.collection.ArraySet;
 @NonNullForAll
 public final class GoBackend implements Backend {
     private static final int DNS_RESOLUTION_RETRIES = 10;
+    // The observed Binder payload for 13,149 IpPrefix objects exceeded 1 MiB. Keep ample room for
+    // addresses, DNS, app rules and device-specific parcel overhead.
+    private static final int MAX_VPN_EXCLUDED_ROUTES = 7_500;
     private static final String TAG = "WireGuard/GoBackend";
     @Nullable private static AlwaysOnCallback alwaysOnCallback;
     private static CompletableFuture<VpnService> vpnService = new CompletableFuture<>();
@@ -53,6 +57,7 @@ public final class GoBackend implements Backend {
     @Nullable private Tunnel currentTunnel;
     private int currentTunnelHandle = -1;
     private List<InetNetwork> excludedRoutes = Collections.emptyList();
+    private Set<String> globallyExcludedApplications = Collections.emptySet();
 
     /**
      * Public constructor for GoBackend.
@@ -67,6 +72,11 @@ public final class GoBackend implements Backend {
     /** Sets destination networks that must use the physical network instead of this VPN. */
     public void setExcludedRoutes(final Collection<InetNetwork> routes) {
         excludedRoutes = Collections.unmodifiableList(new ArrayList<>(routes));
+    }
+
+    /** Sets applications that must use the physical network for every userspace tunnel. */
+    public void setGloballyExcludedApplications(final Collection<String> applications) {
+        globallyExcludedApplications = Collections.unmodifiableSet(new LinkedHashSet<>(applications));
     }
 
     /**
@@ -335,11 +345,31 @@ public final class GoBackend implements Backend {
             final VpnService.Builder builder = service.getBuilder();
             builder.setSession(tunnel.getName());
 
-            for (final String excludedApplication : config.getInterface().getExcludedApplications())
-                builder.addDisallowedApplication(excludedApplication);
-
-            for (final String includedApplication : config.getInterface().getIncludedApplications())
-                builder.addAllowedApplication(includedApplication);
+            final Set<String> includedApplications = config.getInterface().getIncludedApplications();
+            if (includedApplications.isEmpty()) {
+                final Set<String> disallowedApplications = new LinkedHashSet<>(
+                        config.getInterface().getExcludedApplications());
+                disallowedApplications.addAll(globallyExcludedApplications);
+                for (final String excludedApplication : disallowedApplications) {
+                    try {
+                        builder.addDisallowedApplication(excludedApplication);
+                    } catch (final android.content.pm.PackageManager.NameNotFoundException e) {
+                        Log.w(TAG, "Ignoring unavailable excluded application " + excludedApplication);
+                    }
+                }
+            } else {
+                boolean addedAllowedApplication = false;
+                for (final String includedApplication : includedApplications) {
+                    if (!globallyExcludedApplications.contains(includedApplication)) {
+                        builder.addAllowedApplication(includedApplication);
+                        addedAllowedApplication = true;
+                    }
+                }
+                // An empty allow-list means "all applications" to VpnService.Builder. Keep the
+                // tunnel restricted if the global exclusions removed every profile-specific app.
+                if (!addedAllowedApplication)
+                    builder.addAllowedApplication(context.getPackageName());
+            }
 
             for (final InetNetwork addr : config.getInterface().getAddresses())
                 builder.addAddress(addr.getAddress(), addr.getMask());
@@ -364,7 +394,7 @@ public final class GoBackend implements Backend {
                 for (final InetNetwork addr : allowedRoutes)
                     builder.addRoute(addr.getAddress(), addr.getMask());
                 final List<InetNetwork> relevantExcludedRoutes = RouteExcluder.intersect(allowedRoutes, excludedRoutes);
-                Log.i(TAG, "Applying " + relevantExcludedRoutes.size() + " direct destination routes");
+                final List<InetNetwork> supportedExcludedRoutes = new ArrayList<>(relevantExcludedRoutes.size());
                 int skippedRoutes = 0;
                 for (final InetNetwork addr : relevantExcludedRoutes) {
                     if (!RouteExcluder.isVpnServiceRouteSupported(addr)) {
@@ -372,8 +402,16 @@ public final class GoBackend implements Backend {
                         Log.w(TAG, "Skipping direct route rejected by Android VpnService: " + addr);
                         continue;
                     }
-                    builder.excludeRoute(new IpPrefix(addr.getAddress(), addr.getMask()));
+                    supportedExcludedRoutes.add(addr);
                 }
+                final List<InetNetwork> compactedExcludedRoutes = RouteExcluder.compactForVpnService(
+                        supportedExcludedRoutes, MAX_VPN_EXCLUDED_ROUTES);
+                if (compactedExcludedRoutes.size() < supportedExcludedRoutes.size())
+                    Log.w(TAG, "Compacted " + supportedExcludedRoutes.size() + " direct routes to " +
+                            compactedExcludedRoutes.size() + " to stay within Android Binder limits");
+                Log.i(TAG, "Applying " + compactedExcludedRoutes.size() + " direct destination routes");
+                for (final InetNetwork addr : compactedExcludedRoutes)
+                    builder.excludeRoute(new IpPrefix(addr.getAddress(), addr.getMask()));
                 if (skippedRoutes > 0)
                     Log.w(TAG, "Skipped " + skippedRoutes + " unsupported local direct routes");
             } else {
