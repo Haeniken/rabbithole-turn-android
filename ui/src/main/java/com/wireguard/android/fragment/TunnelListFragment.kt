@@ -4,6 +4,7 @@
  */
 package com.wireguard.android.fragment
 
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.res.Resources
 import android.os.Bundle
@@ -166,6 +167,10 @@ class TunnelListFragment : BaseFragment() {
                             SubscriptionDialogFragment().show(parentFragmentManager, "SUBSCRIPTION")
                         }
 
+                        AddTunnelsSheet.REQUEST_CLIPBOARD -> {
+                            importFromClipboard()
+                        }
+
                         AddTunnelsSheet.REQUEST_IMPORT -> {
                             tunnelFileImportResultLauncher.launch("*/*")
                         }
@@ -295,6 +300,23 @@ class TunnelListFragment : BaseFragment() {
         } catch (e: Throwable) {
             showSnackbar(ErrorMessages[e])
         }
+    }
+
+    private fun importFromClipboard() {
+        val context = context ?: return
+        val clipboard = context.getSystemService(ClipboardManager::class.java)
+        val content = clipboard?.primaryClip
+            ?.takeIf { it.itemCount > 0 }
+            ?.getItemAt(0)
+            ?.coerceToText(context)
+            ?.toString()
+            ?.trim()
+            .orEmpty()
+        if (content.isBlank()) {
+            showSnackbar(getString(R.string.clipboard_empty_error))
+            return
+        }
+        lifecycleScope.launch { importQrContent(content) }
     }
 
     private fun setHeroTunnel(tunnel: ObservableTunnel?) {

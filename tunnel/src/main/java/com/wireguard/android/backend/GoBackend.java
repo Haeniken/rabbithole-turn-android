@@ -365,8 +365,17 @@ public final class GoBackend implements Backend {
                     builder.addRoute(addr.getAddress(), addr.getMask());
                 final List<InetNetwork> relevantExcludedRoutes = RouteExcluder.intersect(allowedRoutes, excludedRoutes);
                 Log.i(TAG, "Applying " + relevantExcludedRoutes.size() + " direct destination routes");
-                for (final InetNetwork addr : relevantExcludedRoutes)
+                int skippedRoutes = 0;
+                for (final InetNetwork addr : relevantExcludedRoutes) {
+                    if (!RouteExcluder.isVpnServiceRouteSupported(addr)) {
+                        ++skippedRoutes;
+                        Log.w(TAG, "Skipping direct route rejected by Android VpnService: " + addr);
+                        continue;
+                    }
                     builder.excludeRoute(new IpPrefix(addr.getAddress(), addr.getMask()));
+                }
+                if (skippedRoutes > 0)
+                    Log.w(TAG, "Skipped " + skippedRoutes + " unsupported local direct routes");
             } else {
                 final List<InetNetwork> includedRoutes = RouteExcluder.exclude(allowedRoutes, excludedRoutes);
                 Log.i(TAG, "Applying " + includedRoutes.size() + " VPN destination routes");

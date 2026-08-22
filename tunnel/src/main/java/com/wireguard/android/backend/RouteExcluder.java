@@ -21,6 +21,11 @@ import java.util.List;
 final class RouteExcluder {
     private RouteExcluder() { }
 
+    /** VpnService rejects loopback destinations even when they are valid IP prefixes. */
+    static boolean isVpnServiceRouteSupported(final InetNetwork route) {
+        return !route.getAddress().isLoopbackAddress();
+    }
+
     /** Returns the exact part of {@code excluded} covered by {@code allowed}, without overlaps. */
     static List<InetNetwork> intersect(final Collection<InetNetwork> allowed,
                                        final Collection<InetNetwork> excluded) {

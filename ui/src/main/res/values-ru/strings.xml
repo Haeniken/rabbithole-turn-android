@@ -119,6 +119,8 @@
     <string name="create_bin_dir_error">Не удалось создать локальный бинарный каталог</string>
     <string name="create_downloads_file_error">Не удалось создать файл в каталоге загрузок</string>
     <string name="create_empty">Создать с нуля</string>
+    <string name="create_from_clipboard">Из буфера обмена</string>
+    <string name="clipboard_empty_error">В буфере обмена нет подключения или ссылки подписки</string>
     <string name="create_from_file">Импорт из файла или архива</string>
     <string name="create_from_qr_code">Сканировать QR-код</string>
     <string name="add_subscription">Добавить подписку</string>
@@ -166,7 +168,7 @@
     <string name="main_connection_cancelled">Подключение отменено</string>
     <string name="main_connections">Подключения</string>
     <string name="main_turn_profile">Портал</string>
-    <string name="main_wireguard_profile">Профиль WireGuard</string>
+    <string name="main_wireguard_profile">Портал</string>
     <string name="latency_check">Проверить пинг</string>
     <string name="latency_connect_first">Сначала подключите выбранный туннель</string>
     <string name="latency_result">%d мс</string>

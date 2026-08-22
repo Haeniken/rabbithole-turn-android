@@ -16,6 +16,13 @@ import static org.junit.Assert.assertEquals;
 
 public class RouteExcluderTest {
     @Test
+    public void rejectsLoopbackRoutesUnsupportedByVpnService() throws Exception {
+        assertEquals(false, RouteExcluder.isVpnServiceRouteSupported(InetNetwork.parse("127.0.0.0/8")));
+        assertEquals(false, RouteExcluder.isVpnServiceRouteSupported(InetNetwork.parse("::1/128")));
+        assertEquals(true, RouteExcluder.isVpnServiceRouteSupported(InetNetwork.parse("203.0.113.0/24")));
+    }
+
+    @Test
     public void excludesMiddleOfIPv4DefaultRoute() throws Exception {
         final List<InetNetwork> routes = RouteExcluder.exclude(
                 Collections.singletonList(InetNetwork.parse("0.0.0.0/0")),

@@ -97,6 +97,8 @@
     <string name="create_bin_dir_error">Cannot create local binary directory</string>
     <string name="create_downloads_file_error">Cannot create file in downloads directory</string>
     <string name="create_empty">Create from scratch</string>
+    <string name="create_from_clipboard">From clipboard</string>
+    <string name="clipboard_empty_error">The clipboard does not contain a connection or subscription link</string>
     <string name="create_from_file">Import from file or archive</string>
     <string name="create_from_qr_code">Scan from QR code</string>
     <string name="add_subscription">Add subscription</string>
@@ -142,7 +144,7 @@
     <string name="main_connection_cancelled">Connection cancelled</string>
     <string name="main_connections">Connections</string>
     <string name="main_turn_profile">Portal</string>
-    <string name="main_wireguard_profile">WireGuard profile</string>
+    <string name="main_wireguard_profile">Portal</string>
     <string name="latency_check">Check latency</string>
     <string name="latency_connect_first">Connect the selected tunnel before checking latency</string>
     <string name="latency_result">%d ms</string>

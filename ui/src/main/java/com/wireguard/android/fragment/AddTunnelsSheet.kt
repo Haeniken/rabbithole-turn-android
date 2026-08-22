@@ -62,6 +62,10 @@ class AddTunnelsSheet : BottomSheetDialogFragment() {
                     dismiss()
                     onRequestCreateConfig()
                 }
+                dialog.findViewById<View>(R.id.create_from_clipboard)?.setOnClickListener {
+                    dismiss()
+                    onRequestImportClipboard()
+                }
                 dialog.findViewById<View>(R.id.add_subscription)?.setOnClickListener {
                     dismiss()
                     onRequestAddSubscription()
@@ -91,6 +95,10 @@ class AddTunnelsSheet : BottomSheetDialogFragment() {
         setFragmentResult(REQUEST_KEY_NEW_TUNNEL, bundleOf(REQUEST_METHOD to REQUEST_IMPORT))
     }
 
+    private fun onRequestImportClipboard() {
+        setFragmentResult(REQUEST_KEY_NEW_TUNNEL, bundleOf(REQUEST_METHOD to REQUEST_CLIPBOARD))
+    }
+
     private fun onRequestScanQRCode() {
         setFragmentResult(REQUEST_KEY_NEW_TUNNEL, bundleOf(REQUEST_METHOD to REQUEST_SCAN))
     }
@@ -103,6 +111,7 @@ class AddTunnelsSheet : BottomSheetDialogFragment() {
         const val REQUEST_KEY_NEW_TUNNEL = "request_new_tunnel"
         const val REQUEST_METHOD = "request_method"
         const val REQUEST_CREATE = "request_create"
+        const val REQUEST_CLIPBOARD = "request_clipboard"
         const val REQUEST_IMPORT = "request_import"
         const val REQUEST_SCAN = "request_scan"
         const val REQUEST_SUBSCRIPTION = "request_subscription"
