@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:key="subscription_settings">
+
+    <CheckBoxPreference
+        android:defaultValue="true"
+        android:key="subscription_automatic_updates"
+        android:layout="@layout/rabbit_preference"
+        android:singleLineTitle="false"
+        android:summaryOff="@string/subscription_automatic_updates_summary_off"
+        android:summaryOn="@string/subscription_automatic_updates_summary_on"
+        android:title="@string/subscription_automatic_updates_title" />
+
+    <EditTextPreference
+        android:defaultValue="12"
+        android:key="subscription_update_interval_hours"
+        android:layout="@layout/rabbit_preference"
+        android:singleLineTitle="false"
+        android:title="@string/subscription_update_interval_title" />
+
+    <CheckBoxPreference
+        android:defaultValue="false"
+        android:key="subscription_update_on_open"
+        android:layout="@layout/rabbit_preference"
+        android:singleLineTitle="false"
+        android:summaryOff="@string/subscription_update_on_open_summary_off"
+        android:summaryOn="@string/subscription_update_on_open_summary_on"
+        android:title="@string/subscription_update_on_open_title" />
+
+    <SeekBarPreference
+        android:defaultValue="10"
+        android:key="subscription_request_timeout_seconds"
+        android:layout="@layout/rabbit_preference"
+        android:max="30"
+        android:singleLineTitle="false"
+        android:title="@string/subscription_request_timeout_title"
+        app:min="5"
+        app:showSeekBarValue="true" />
+
+    <com.wireguard.android.preference.DynamicDefaultEditTextPreference
+        android:key="subscription_user_agent"
+        android:layout="@layout/rabbit_preference"
+        android:singleLineTitle="false"
+        android:title="@string/subscription_user_agent_title" />
+</androidx.preference.PreferenceScreen>

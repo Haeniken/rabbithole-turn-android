@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    android:key="routing_settings">
+
+    <Preference
+        android:key="routing_lists_update"
+        android:layout="@layout/rabbit_preference"
+        android:summary="@string/routing_lists_never_updated"
+        android:title="@string/routing_lists_update" />
+
+    <Preference
+        android:key="global_app_exclusions"
+        android:layout="@layout/rabbit_preference"
+        android:singleLineTitle="false"
+        android:summary="@string/global_app_exclusions_summary_none"
+        android:title="@string/global_app_exclusions_title" />
+
+    <EditTextPreference
+        android:defaultValue="@string/routing_excluded_routes_default"
+        android:key="routing_excluded_routes"
+        android:layout="@layout/rabbit_preference"
+        android:singleLineTitle="false"
+        android:summary="@string/routing_excluded_routes_summary"
+        android:title="@string/routing_excluded_routes_title" />
+
+    <CheckBoxPreference
+        android:defaultValue="false"
+        android:key="allow_remote_control_intents"
+        android:layout="@layout/rabbit_preference"
+        android:singleLineTitle="false"
+        android:summaryOff="@string/allow_remote_control_intents_summary_off"
+        android:summaryOn="@string/allow_remote_control_intents_summary_on"
+        android:title="@string/allow_remote_control_intents_title" />
+
+    <com.wireguard.android.preference.DynamicDefaultEditTextPreference
+        android:key="turn_user_agent"
+        android:layout="@layout/rabbit_preference"
+        android:singleLineTitle="false"
+        android:title="@string/turn_user_agent_title" />
+</androidx.preference.PreferenceScreen>

@@ -29,6 +29,9 @@ object HttpsFetcher {
         maxBytes: Int,
         etag: String? = null,
         lastModified: String? = null,
+        connectTimeoutMs: Int = DEFAULT_CONNECT_TIMEOUT_MS,
+        readTimeoutMs: Int = DEFAULT_READ_TIMEOUT_MS,
+        userAgent: String = Application.USER_AGENT,
     ): Response = withContext(Dispatchers.IO) {
         var current = validateUrl(url)
         repeat(MAX_REDIRECTS + 1) { redirectCount ->
@@ -36,14 +39,14 @@ object HttpsFetcher {
                 ?: throw IOException("Only HTTPS URLs are supported")
             try {
                 connection.instanceFollowRedirects = false
-                connection.connectTimeout = CONNECT_TIMEOUT_MS
-                connection.readTimeout = READ_TIMEOUT_MS
+                connection.connectTimeout = connectTimeoutMs
+                connection.readTimeout = readTimeoutMs
                 connection.requestMethod = "GET"
                 connection.setRequestProperty(
                     "Accept",
                     "application/vnd.rabbithole.turn-bundle+json; version=1, text/plain, application/wireguard-profile, application/octet-stream",
                 )
-                connection.setRequestProperty("User-Agent", Application.USER_AGENT)
+                connection.setRequestProperty("User-Agent", userAgent)
                 if (!etag.isNullOrBlank()) connection.setRequestProperty("If-None-Match", etag)
                 if (!lastModified.isNullOrBlank()) connection.setRequestProperty("If-Modified-Since", lastModified)
 
@@ -101,6 +104,6 @@ object HttpsFetcher {
 
     private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
     private const val MAX_REDIRECTS = 4
-    private const val CONNECT_TIMEOUT_MS = 15_000
-    private const val READ_TIMEOUT_MS = 30_000
+    private const val DEFAULT_CONNECT_TIMEOUT_MS = 15_000
+    private const val DEFAULT_READ_TIMEOUT_MS = 30_000
 }

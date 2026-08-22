@@ -8,6 +8,13 @@ val releaseKeystorePath = providers.environmentVariable("ANDROID_KEYSTORE_PATH")
 val releaseKeystorePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orNull.orEmpty()
 val releaseKeyAlias = providers.environmentVariable("ANDROID_KEY_ALIAS").orNull.orEmpty()
 val releaseKeyPassword = providers.environmentVariable("ANDROID_KEY_PASSWORD").orNull.orEmpty()
+val sourceCommit = providers.environmentVariable("GITHUB_SHA").orNull
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+    ?: providers.exec {
+        commandLine("git", "rev-parse", "HEAD")
+        isIgnoreExitValue = true
+    }.standardOutput.asText.get().trim().ifBlank { "unknown" }
 val releaseSigningConfigured = listOf(
     releaseKeystorePath,
     releaseKeystorePassword,
@@ -37,6 +44,7 @@ android {
         versionCode = providers.gradleProperty("wireguardVersionCode").get().toInt()
         versionName = providers.gradleProperty("wireguardVersionName").get()
         buildConfigField("int", "MIN_SDK_VERSION", minSdk.toString())
+        buildConfigField("String", "SOURCE_COMMIT", "\"${sourceCommit.take(12)}\"")
         ndk {
             abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a"))
         }

@@ -24,6 +24,7 @@ import com.wireguard.android.backend.Statistics
 import com.wireguard.android.backend.Tunnel
 import com.wireguard.android.configStore.ConfigStore
 import com.wireguard.android.databinding.ObservableSortedKeyedArrayList
+import com.wireguard.android.routing.ManualRouteExclusions
 import com.wireguard.android.routing.RoutingListUpdateWorker
 import com.wireguard.android.routing.RoutingPolicy
 import com.wireguard.android.turn.TurnConfigProcessor
@@ -316,16 +317,23 @@ class TunnelManager(
 
             if (shouldStartTurn) {
                 val goBackend = backend as? GoBackend
+                val manualRoutes = if (goBackend == null) {
+                    emptyList()
+                } else {
+                    withContext(Dispatchers.IO) {
+                        ManualRouteExclusions.load(Application.getPreferencesDataStore())
+                    }
+                }
                 if (routingPolicy == RoutingPolicy.DIRECT_RUSSIA) {
                     if (goBackend == null)
                         throw IllegalStateException(context.getString(R.string.routing_requires_go_backend))
                     val directRoutes = withContext(Dispatchers.IO) {
                         Application.getRoutingListManager().ensureDirectRoutes()
                     }
-                    goBackend.setExcludedRoutes(directRoutes)
+                    goBackend.setExcludedRoutes((manualRoutes + directRoutes).distinct())
                     RoutingListUpdateWorker.schedulePeriodic(context)
                 } else {
-                    goBackend?.setExcludedRoutes(emptyList())
+                    goBackend?.setExcludedRoutes(manualRoutes)
                 }
             } else if (shouldStopTurn) {
                 (backend as? GoBackend)?.setExcludedRoutes(emptyList())

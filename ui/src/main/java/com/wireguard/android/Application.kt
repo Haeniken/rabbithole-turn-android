@@ -34,6 +34,7 @@ import com.wireguard.android.turn.TurnSettingsStore
 import com.wireguard.android.updater.Updater
 import com.wireguard.android.util.RootShell
 import com.wireguard.android.util.ToolsInstaller
+import com.wireguard.android.util.TurnUserAgentSettings
 import com.wireguard.android.util.UserKnobs
 import com.wireguard.android.util.applicationScope
 import kotlinx.coroutines.CompletableDeferred
@@ -102,6 +103,7 @@ class Application : android.app.Application() {
         rootShell = RootShell(applicationContext)
         toolsInstaller = ToolsInstaller(applicationContext, rootShell)
         preferencesDataStore = PreferenceDataStoreFactory.create { applicationContext.preferencesDataStoreFile("settings") }
+        TurnUserAgentSettings.observe(preferencesDataStore, coroutineScope)
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             runBlocking {
                 AppCompatDelegate.setDefaultNightMode(if (UserKnobs.darkTheme.first()) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO)
@@ -143,7 +145,9 @@ class Application : android.app.Application() {
         RoutingListUpdateWorker.scheduleStartup(applicationContext)
         if (routingListManager.hasData())
             RoutingListUpdateWorker.schedulePeriodic(applicationContext)
-        SubscriptionUpdateWorker.schedule(applicationContext)
+        coroutineScope.launch(Dispatchers.IO) {
+            SubscriptionUpdateWorker.configureAtStartup(applicationContext)
+        }
         coroutineScope.launch(Dispatchers.IO) {
             try {
                 backend = determineBackend()

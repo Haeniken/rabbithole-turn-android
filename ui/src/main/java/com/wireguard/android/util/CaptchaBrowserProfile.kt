@@ -79,19 +79,28 @@ class CaptchaBrowserProfile private constructor(
     }
 
     companion object {
-        private const val CHROME_MAJOR = 146
+        private const val DEFAULT_CHROME_MAJOR = 146
 
         @Volatile
-        private var cached: CaptchaBrowserProfile? = null
+        private var cached: Pair<String, CaptchaBrowserProfile>? = null
 
         fun get(context: Context): CaptchaBrowserProfile {
-            cached?.let { return it }
+            val userAgent = TurnUserAgentSettings.resolve(defaultUserAgent(context))
+            cached?.takeIf { it.first == userAgent }?.second?.let { return it }
             return synchronized(this) {
-                cached ?: create(context.applicationContext).also { cached = it }
+                cached?.takeIf { it.first == userAgent }?.second
+                    ?: create(context.applicationContext, userAgent).also { cached = userAgent to it }
             }
         }
 
-        private fun create(context: Context): CaptchaBrowserProfile {
+        fun defaultUserAgent(context: Context): String {
+            val model = Build.MODEL.replace(Regex("[();]"), " ").trim().ifBlank { "Android" }
+            val androidVersion = Build.VERSION.RELEASE.ifBlank { "14" }
+            return "Mozilla/5.0 (Linux; Android $androidVersion; $model) " +
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$DEFAULT_CHROME_MAJOR.0.0.0 Mobile Safari/537.36"
+        }
+
+        private fun create(context: Context, userAgent: String): CaptchaBrowserProfile {
             val metrics = context.resources.displayMetrics
             val density = metrics.density.takeIf { it > 0f } ?: 1f
             val width = (metrics.widthPixels / density).roundToInt().coerceAtLeast(1)
@@ -99,10 +108,11 @@ class CaptchaBrowserProfile private constructor(
             val locale = Locale.getDefault()
             val language = locale.toLanguageTag().ifBlank { "en-US" }
             val languages = listOf(language, locale.language, "en").filter { it.isNotBlank() }.distinct()
-            val model = Build.MODEL.replace(Regex("[();]"), " ").trim().ifBlank { "Android" }
-            val androidVersion = Build.VERSION.RELEASE.ifBlank { "14" }
-            val userAgent = "Mozilla/5.0 (Linux; Android $androidVersion; $model) " +
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$CHROME_MAJOR.0.0.0 Mobile Safari/537.36"
+            val chromeMajor = CHROME_VERSION_REGEX.find(userAgent)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.toIntOrNull()
+                ?: DEFAULT_CHROME_MAJOR
             val navigatorPlatform = if (Build.SUPPORTED_ABIS.firstOrNull()?.contains("x86") == true) {
                 "Linux x86_64"
             } else {
@@ -111,7 +121,7 @@ class CaptchaBrowserProfile private constructor(
 
             return CaptchaBrowserProfile(
                 userAgent = userAgent,
-                secChUa = "\"Not(A:Brand\";v=\"99\", \"Google Chrome\";v=\"$CHROME_MAJOR\", \"Chromium\";v=\"$CHROME_MAJOR\"",
+                secChUa = "\"Not(A:Brand\";v=\"99\", \"Google Chrome\";v=\"$chromeMajor\", \"Chromium\";v=\"$chromeMajor\"",
                 secChUaMobile = "?1",
                 secChUaPlatform = "\"Android\"",
                 language = language,
@@ -140,5 +150,7 @@ class CaptchaBrowserProfile private constructor(
                 else -> 8
             }
         }
+
+        private val CHROME_VERSION_REGEX = Regex("Chrome/(\\d+)", RegexOption.IGNORE_CASE)
     }
 }

@@ -41,7 +41,7 @@ class SubscriptionManager(
 
     suspend fun add(url: String): UpdateResult.Added = operationMutex.withLock {
         val normalizedUrl = url.trim()
-        val response = HttpsFetcher.get(normalizedUrl, MAX_BUNDLE_BYTES)
+        val response = fetchSubscription(normalizedUrl, MAX_BUNDLE_BYTES)
         if (response.status != 200) throw IOException(context.getString(R.string.subscription_add_http_error, response.status))
         if (SubscriptionBundle.isMediaType(response.contentType)) {
             addBundle(normalizedUrl, response)
@@ -272,12 +272,31 @@ class SubscriptionManager(
         }
     }
 
-    private suspend fun fetchUpdate(record: SubscriptionStore.Record, maxBytes: Int) = HttpsFetcher.get(
+    private suspend fun fetchUpdate(record: SubscriptionStore.Record, maxBytes: Int) = fetchSubscription(
         record.url,
         maxBytes,
         record.etag,
         record.lastModified,
     )
+
+    private suspend fun fetchSubscription(
+        url: String,
+        maxBytes: Int,
+        etag: String? = null,
+        lastModified: String? = null,
+    ): HttpsFetcher.Response {
+        val settings = SubscriptionSettings.load(Application.getPreferencesDataStore())
+        val timeoutMs = settings.requestTimeoutSeconds * 1_000
+        return HttpsFetcher.get(
+            url = url,
+            maxBytes = maxBytes,
+            etag = etag,
+            lastModified = lastModified,
+            connectTimeoutMs = timeoutMs,
+            readTimeoutMs = timeoutMs,
+            userAgent = settings.userAgent,
+        )
+    }
 
     private fun parseBundleProfiles(bundle: SubscriptionBundle): List<ParsedProfile> = bundle.profiles.map { profile ->
         val config = parseConfig(profile.config)
