@@ -26,6 +26,7 @@ The project is developed as a separate application with package name `com.rabbit
 ## Installation
 
 Stable builds are published on the [Releases](https://github.com/Haeniken/rabbithole-turn-android/releases) page.
+Permanent direct link to the current APK: [rabbit-hole-latest.apk](https://github.com/Haeniken/rabbithole-turn-android/releases/latest/download/rabbit-hole-latest.apk).
 
 Android must allow the application to install APK updates from this source. Every public release must use the same release signing key. A locally installed debug build uses a different certificate and must be removed before installing the first public release.
 

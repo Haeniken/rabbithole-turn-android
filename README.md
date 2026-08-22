@@ -26,6 +26,7 @@ Android-клиент защищённых туннелей на базе WireGua
 ## Установка
 
 Готовые стабильные сборки публикуются в разделе [Releases](https://github.com/Haeniken/rabbithole-turn-android/releases).
+Постоянная прямая ссылка на актуальный APK: [rabbit-hole-latest.apk](https://github.com/Haeniken/rabbithole-turn-android/releases/latest/download/rabbit-hole-latest.apk).
 
 Для обновлений Android должен разрешать приложению установку APK из этого источника. Все версии, начиная с первого публичного релиза, должны быть подписаны одним и тем же release-ключом. Если ранее была установлена локальная debug-сборка, перед первой установкой публичного релиза её потребуется удалить из-за другого сертификата.
 

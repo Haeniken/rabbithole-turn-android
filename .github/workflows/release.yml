@@ -93,6 +93,8 @@ jobs:
             exit 1
           fi
           sha256sum "$apk" > "$apk.sha256"
+          cp "$apk" rabbit-hole-latest.apk
+          sha256sum rabbit-hole-latest.apk > rabbit-hole-latest.apk.sha256
           echo "apk=$apk" >> "$GITHUB_OUTPUT"
 
       - name: Upload signed APK artifact
@@ -102,6 +104,8 @@ jobs:
           path: |
             ${{ steps.artifact.outputs.apk }}
             ${{ steps.artifact.outputs.apk }}.sha256
+            rabbit-hole-latest.apk
+            rabbit-hole-latest.apk.sha256
             apksigner-report.txt
           retention-days: 90
 
@@ -113,6 +117,8 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             "${{ steps.artifact.outputs.apk }}" \
             "${{ steps.artifact.outputs.apk }}.sha256" \
+            rabbit-hole-latest.apk \
+            rabbit-hole-latest.apk.sha256 \
             --verify-tag \
             --title "Кроличья нора ${{ steps.version.outputs.name }}" \
             --generate-notes
