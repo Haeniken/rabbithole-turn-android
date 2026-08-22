@@ -148,11 +148,12 @@
     <string name="subscription_disabled_error">Подписка отключена провайдером. После повторного включения нажмите «Обновить подписку».</string>
     <string name="subscription_metadata_invalid">Данные подписки повреждены. Добавьте подписку заново перед подключением.</string>
     <string name="subscription_update">Обновить подписку</string>
+    <string name="subscription_checking">Проверяем подписку…</string>
     <string name="subscription_updating">Обновление подписки…</string>
-    <string name="subscription_unchanged">Подписка уже актуальна</string>
-    <string name="subscription_updated">Конфигурация подписки обновлена</string>
-    <string name="subscription_disabled">Подписка отключена провайдером, туннель остановлен</string>
-    <string name="subscription_enabled">Подписка снова активна</string>
+    <string name="subscription_unchanged">Подписка актуальна · проверено серверов: %1$d</string>
+    <string name="subscription_updated">Подписка обновлена · проверено серверов: %1$d</string>
+    <string name="subscription_disabled">Подписка отключена провайдером · остановлено серверов: %1$d</string>
+    <string name="subscription_enabled">Подписка снова активна · проверено серверов: %1$d</string>
     <string name="subscription_expires">Действует до %s</string>
     <string name="main_secure_route">Личный маршрут</string>
     <string name="main_no_tunnel">Подключение не выбрано</string>
@@ -170,7 +171,7 @@
     <string name="main_turn_profile">Портал</string>
     <string name="main_wireguard_profile">Портал</string>
     <string name="latency_check">Проверить пинг</string>
-    <string name="latency_connect_first">Сначала подключите выбранный туннель</string>
+    <string name="latency_connect_first">Сначала подключите туннель</string>
     <string name="latency_result">%d мс</string>
     <string name="latency_failed">Не удалось проверить пинг: %s</string>
     <string name="latency_no_response">VPN пока не отвечает. Подождите несколько секунд и повторите проверку.</string>
@@ -294,6 +295,9 @@
     <string name="routing_lists_never_updated">Геоданные ещё не загружены</string>
     <string name="routing_lists_status">Обновлено %1$s · CIDR: %2$d · правил доменов: %3$d · найдено адресов: %4$d</string>
     <string name="routing_lists_updating">Загрузка и проверка GeoIP и GeoSite…</string>
+    <string name="routing_lists_download_progress">Загрузка %1$s: %2$s / %3$s (%4$.2f%%)</string>
+    <string name="routing_lists_download_progress_nototal">Загрузка %1$s: %2$s</string>
+    <string name="routing_lists_validating">Проверка геоданных и подготовка маршрутов…</string>
     <string name="routing_lists_updated">Геоданные маршрутизации обновлены</string>
     <string name="routing_lists_update_failed">Ошибка обновления: %s</string>
     <string name="routing_lists_update_failed_using_cache">Ошибка обновления: %s. Ранее загруженные геоданные продолжают работать.</string>

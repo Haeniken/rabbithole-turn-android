@@ -31,7 +31,7 @@
     <SeekBarPreference
         android:defaultValue="10"
         android:key="subscription_request_timeout_seconds"
-        android:layout="@layout/rabbit_preference"
+        android:layout="@layout/rabbit_seekbar_preference"
         android:max="30"
         android:singleLineTitle="false"
         android:title="@string/subscription_request_timeout_title"

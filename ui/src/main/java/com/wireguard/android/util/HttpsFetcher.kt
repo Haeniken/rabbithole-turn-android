@@ -32,6 +32,7 @@ object HttpsFetcher {
         connectTimeoutMs: Int = DEFAULT_CONNECT_TIMEOUT_MS,
         readTimeoutMs: Int = DEFAULT_READ_TIMEOUT_MS,
         userAgent: String = Application.USER_AGENT,
+        onDownloadProgress: ((bytesDownloaded: Long, bytesTotal: Long) -> Unit)? = null,
     ): Response = withContext(Dispatchers.IO) {
         var current = validateUrl(url)
         repeat(MAX_REDIRECTS + 1) { redirectCount ->
@@ -64,13 +65,22 @@ object HttpsFetcher {
                         val output = ByteArrayOutputStream(minOf(maxBytes, DEFAULT_BUFFER_SIZE))
                         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                         var total = 0
+                        var lastReported = 0
+                        val expected = connection.contentLengthLong.takeIf { it > 0 } ?: 0L
+                        onDownloadProgress?.invoke(0L, expected)
                         while (true) {
                             val read = input.read(buffer)
                             if (read < 0) break
                             total += read
                             if (total > maxBytes) throw IOException("HTTPS response is too large")
                             output.write(buffer, 0, read)
+                            if (total - lastReported >= PROGRESS_REPORT_BYTES) {
+                                lastReported = total
+                                onDownloadProgress?.invoke(total.toLong(), expected)
+                            }
                         }
+                        if (total != lastReported)
+                            onDownloadProgress?.invoke(total.toLong(), expected)
                         output.toByteArray()
                     }
                 } else {
@@ -106,4 +116,5 @@ object HttpsFetcher {
     private const val MAX_REDIRECTS = 4
     private const val DEFAULT_CONNECT_TIMEOUT_MS = 15_000
     private const val DEFAULT_READ_TIMEOUT_MS = 30_000
+    private const val PROGRESS_REPORT_BYTES = 64 * 1024
 }

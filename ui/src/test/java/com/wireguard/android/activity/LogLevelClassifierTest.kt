@@ -17,5 +17,7 @@ class LogLevelClassifierTest {
     @Test
     fun actualFailuresRemainErrors() {
         assertEquals("E", effectiveLogLevel("I", "TURN allocation failed: timeout"))
+        assertEquals("E", effectiveLogLevel("I", "Unable to open subscription settings"))
+        assertEquals("E", effectiveLogLevel("I", "Invalid resource ID 0x00000000"))
     }
 }

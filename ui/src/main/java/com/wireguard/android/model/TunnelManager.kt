@@ -272,6 +272,20 @@ class TunnelManager(
 
     suspend fun setTunnelState(tunnel: ObservableTunnel, state: Tunnel.State): Tunnel.State = withContext(Dispatchers.Main.immediate) {
         if (state == tunnel.state) return@withContext state
+
+        val requestedStart = state == Tunnel.State.UP ||
+            (state == Tunnel.State.TOGGLE && tunnel.state == Tunnel.State.DOWN)
+        val previouslyActive = if (requestedStart) {
+            tunnelMap.filter { it !== tunnel && it.state == Tunnel.State.UP }
+        } else {
+            emptyList()
+        }
+        if (previouslyActive.isNotEmpty()) {
+            Log.i(
+                TAG,
+                "Switching active tunnel from ${previouslyActive.joinToString { it.name }} to ${tunnel.name}",
+            )
+        }
         
         // If we are already UP and someone (like AlwaysOnCallback) requests UP again,
         // double check with backend if it is really running.
@@ -294,7 +308,7 @@ class TunnelManager(
             
             // Determine if TURN should be started before WireGuard activation.
             // This happens when explicitly requesting UP, or TOGGLE from DOWN state
-            val shouldStartTurn = state == Tunnel.State.UP || (state == Tunnel.State.TOGGLE && tunnel.state == Tunnel.State.DOWN)
+            val shouldStartTurn = requestedStart
             
             // Stop TURN when tunnel goes DOWN
             val shouldStopTurn = state == Tunnel.State.DOWN || (state == Tunnel.State.TOGGLE && tunnel.state == Tunnel.State.UP)
@@ -330,9 +344,18 @@ class TunnelManager(
                     val directRoutes = withContext(Dispatchers.IO) {
                         Application.getRoutingListManager().ensureDirectRoutes()
                     }
-                    goBackend.setExcludedRoutes((manualRoutes + directRoutes).distinct())
+                    val excludedRoutes = (manualRoutes + directRoutes).distinct()
+                    Log.i(
+                        ROUTING_TAG,
+                        "ru-direct enabled for ${tunnel.name}: geo=${directRoutes.size}, manual=${manualRoutes.size}, total=${excludedRoutes.size}",
+                    )
+                    goBackend.setExcludedRoutes(excludedRoutes)
                     RoutingListUpdateWorker.schedulePeriodic(context)
                 } else {
+                    Log.i(
+                        ROUTING_TAG,
+                        "Tunnel-all routing enabled for ${tunnel.name}: manual exclusions=${manualRoutes.size}",
+                    )
                     goBackend?.setExcludedRoutes(manualRoutes)
                 }
             } else if (shouldStopTurn) {
@@ -391,6 +414,19 @@ class TunnelManager(
             throwable = e
         }
         tunnel.onStateChanged(newState)
+        if (throwable != null && throwable !is CancellationException && previouslyActive.isNotEmpty()) {
+            Log.e(TAG, "Unable to activate ${tunnel.name}; restoring the previous tunnel", throwable)
+            previouslyActive.forEach { previous ->
+                if (previous.state == Tunnel.State.UP) return@forEach
+                try {
+                    setTunnelState(previous, Tunnel.State.UP)
+                    Log.i(TAG, "Restored previous tunnel ${previous.name}")
+                } catch (restoreError: Throwable) {
+                    throwable.addSuppressed(restoreError)
+                    Log.e(TAG, "Unable to restore previous tunnel ${previous.name}", restoreError)
+                }
+            }
+        }
         saveState()
         if (throwable != null)
             throw throwable
@@ -435,6 +471,7 @@ class TunnelManager(
     }
 
     companion object {
+        private const val ROUTING_TAG = "RabbitHole/GeoRouting"
         private const val TAG = "WireGuard/TunnelManager"
     }
 }

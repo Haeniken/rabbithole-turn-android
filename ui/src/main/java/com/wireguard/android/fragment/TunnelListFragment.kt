@@ -8,6 +8,8 @@ import android.content.ClipboardManager
 import android.content.Intent
 import android.content.res.Resources
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.Menu
@@ -22,12 +24,15 @@ import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.view.ActionMode
+import androidx.databinding.Observable
+import androidx.databinding.ObservableList
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.snackbar.Snackbar
 import com.google.zxing.qrcode.QRCodeReader
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import com.wireguard.android.Application
+import com.wireguard.android.BR
 import com.wireguard.android.R
 import com.wireguard.android.activity.TunnelCreatorActivity
 import com.wireguard.android.activity.CaptchaCoordinator
@@ -37,6 +42,7 @@ import com.wireguard.android.activity.TunnelEditorActivity
 import com.wireguard.android.backend.Tunnel
 import com.wireguard.android.backend.GoBackend
 import com.wireguard.android.databinding.ObservableKeyedRecyclerViewAdapter.RowConfigurationHandler
+import com.wireguard.android.databinding.ObservableKeyedArrayList
 import com.wireguard.android.databinding.TunnelListFragmentBinding
 import com.wireguard.android.databinding.TunnelListItemBinding
 import com.wireguard.android.model.ObservableTunnel
@@ -55,10 +61,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
-import java.net.InetSocketAddress
-import java.net.Socket
+import java.net.HttpURLConnection
+import java.net.URL
 import java.text.DateFormat
 import java.util.Date
+import javax.net.ssl.HttpsURLConnection
 import kotlin.random.Random
 
 /**
@@ -70,12 +77,59 @@ class TunnelListFragment : BaseFragment() {
     private var backPressedCallback: OnBackPressedCallback? = null
     private var binding: TunnelListFragmentBinding? = null
     private var heroTunnel: ObservableTunnel? = null
+    private var activeTunnel: ObservableTunnel? = null
     private var subscriptionTarget: ObservableTunnel? = null
+    private var observedTunnelList: ObservableKeyedArrayList<String, ObservableTunnel>? = null
+    private val observedTunnels = linkedSetOf<ObservableTunnel>()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val activeTunnelRefreshRunnable = Runnable {
+        try {
+            refreshActiveTunnelOnMainThread()
+        } catch (e: Throwable) {
+            // A presentation failure must never propagate into GoBackend.setState().
+            Log.e(TAG, "Unable to refresh active tunnel presentation", e)
+        }
+    }
+    private val tunnelStateCallback = object : Observable.OnPropertyChangedCallback() {
+        override fun onPropertyChanged(sender: Observable?, propertyId: Int) {
+            if (propertyId == BR.state || propertyId == 0) scheduleActiveTunnelRefresh()
+        }
+    }
+    private val tunnelListCallback = object :
+        ObservableList.OnListChangedCallback<ObservableKeyedArrayList<String, ObservableTunnel>>() {
+        override fun onChanged(sender: ObservableKeyedArrayList<String, ObservableTunnel>) = observeTunnelStates(sender)
+
+        override fun onItemRangeChanged(
+            sender: ObservableKeyedArrayList<String, ObservableTunnel>,
+            positionStart: Int,
+            itemCount: Int,
+        ) = observeTunnelStates(sender)
+
+        override fun onItemRangeInserted(
+            sender: ObservableKeyedArrayList<String, ObservableTunnel>,
+            positionStart: Int,
+            itemCount: Int,
+        ) = observeTunnelStates(sender)
+
+        override fun onItemRangeMoved(
+            sender: ObservableKeyedArrayList<String, ObservableTunnel>,
+            fromPosition: Int,
+            toPosition: Int,
+            itemCount: Int,
+        ) = observeTunnelStates(sender)
+
+        override fun onItemRangeRemoved(
+            sender: ObservableKeyedArrayList<String, ObservableTunnel>,
+            positionStart: Int,
+            itemCount: Int,
+        ) = observeTunnelStates(sender)
+    }
     private var isPowerTransitioning = false
     private var isPowerStarting = false
     private var isPowerCancellationRequested = false
     private var powerTransitionJob: Job? = null
     private var connectionMessageJob: Job? = null
+    private var subscriptionStatusSnackbar: Snackbar? = null
     private var lastConnectionMessageIndex = -1
     private val tunnelFileImportResultLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { data ->
         if (data == null) return@registerForActivityResult
@@ -147,9 +201,10 @@ class TunnelListFragment : BaseFragment() {
                 if (isPowerCancellationRequested) return@setOnClickListener
                 isPowerStarting = tunnel.state != Tunnel.State.UP
                 setPowerTransitioning(true)
-                powerTransitionJob = requestTunnelState(tunnel, source, isPowerStarting) {
+                powerTransitionJob = requestTunnelState(tunnel, source, isPowerStarting) { completed ->
                     powerTransitionJob = null
                     setPowerTransitioning(false)
+                    if (completed) setHeroTunnel(tunnel, forceSelectionRefresh = true)
                 }
             }
             latencyCheck.setOnClickListener { checkLatency() }
@@ -198,6 +253,14 @@ class TunnelListFragment : BaseFragment() {
     override fun onDestroyView() {
         connectionMessageJob?.cancel()
         connectionMessageJob = null
+        subscriptionStatusSnackbar?.dismiss()
+        subscriptionStatusSnackbar = null
+        observedTunnelList?.removeOnListChangedCallback(tunnelListCallback)
+        observedTunnelList = null
+        observedTunnels.forEach { it.removeOnPropertyChangedCallback(tunnelStateCallback) }
+        observedTunnels.clear()
+        mainHandler.removeCallbacks(activeTunnelRefreshRunnable)
+        activeTunnel = null
         binding = null
         super.onDestroyView()
     }
@@ -232,6 +295,7 @@ class TunnelListFragment : BaseFragment() {
         lifecycleScope.launch {
             val tunnels = Application.getTunnelManager().getTunnels()
             binding?.tunnels = tunnels
+            attachTunnelList(tunnels)
             setHeroTunnel(selectedTunnel ?: Application.getTunnelManager().lastUsedTunnel ?: tunnels.firstOrNull())
         }
         binding!!.rowConfigurationHandler = object : RowConfigurationHandler<TunnelListItemBinding, ObservableTunnel> {
@@ -259,7 +323,8 @@ class TunnelListFragment : BaseFragment() {
                 if (actionMode != null)
                     (binding.root as MultiselectableRelativeLayout).setMultiSelected(actionModeListener.checkedItems.contains(position))
                 else
-                    (binding.root as MultiselectableRelativeLayout).setSingleSelected(heroTunnel == item)
+                    (binding.root as MultiselectableRelativeLayout).setSingleSelected(heroTunnel === item)
+                binding.tunnelActiveIndicator.visibility = if (activeTunnel === item) View.VISIBLE else View.GONE
             }
         }
     }
@@ -267,13 +332,41 @@ class TunnelListFragment : BaseFragment() {
     private fun showSnackbar(message: CharSequence) {
         val binding = binding
         if (binding != null)
-            Snackbar.make(binding.mainContainer, message, Snackbar.LENGTH_LONG)
-                .setBackgroundTint(binding.root.context.getColor(R.color.rabbit_surface_high))
-                .setTextColor(binding.root.context.getColor(R.color.rabbit_text_primary))
-                .setActionTextColor(binding.root.context.getColor(R.color.rabbit_accent_soft))
-                .show()
+            makeSnackbar(binding, message, Snackbar.LENGTH_LONG).show()
         else
             Toast.makeText(activity ?: Application.get(), message, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun makeSnackbar(
+        binding: TunnelListFragmentBinding,
+        message: CharSequence,
+        duration: Int,
+    ): Snackbar = Snackbar.make(binding.mainContainer, message, duration)
+        .setBackgroundTint(binding.root.context.getColor(R.color.rabbit_surface_high))
+        .setTextColor(binding.root.context.getColor(R.color.rabbit_text_primary))
+        .setActionTextColor(binding.root.context.getColor(R.color.rabbit_accent_soft))
+
+    private fun showSubscriptionProgress(binding: TunnelListFragmentBinding) {
+        subscriptionStatusSnackbar?.dismiss()
+        subscriptionStatusSnackbar = makeSnackbar(
+            binding,
+            getString(R.string.subscription_checking),
+            Snackbar.LENGTH_INDEFINITE,
+        ).also { it.show() }
+    }
+
+    private fun showSubscriptionResult(message: CharSequence) {
+        val currentBinding = binding
+        val snackbar = subscriptionStatusSnackbar
+        subscriptionStatusSnackbar = null
+        if (currentBinding != null && snackbar != null) {
+            snackbar.setText(message)
+            snackbar.duration = Snackbar.LENGTH_LONG
+            // Calling show again updates the timeout of an already visible Snackbar.
+            snackbar.show()
+        } else {
+            showSnackbar(message)
+        }
     }
 
     private suspend fun importQrContent(content: String) {
@@ -319,13 +412,71 @@ class TunnelListFragment : BaseFragment() {
         lifecycleScope.launch { importQrContent(content) }
     }
 
-    private fun setHeroTunnel(tunnel: ObservableTunnel?) {
-        val changed = heroTunnel != tunnel
+    private fun setHeroTunnel(tunnel: ObservableTunnel?, forceSelectionRefresh: Boolean = false) {
+        val changed = heroTunnel !== tunnel
         heroTunnel = tunnel
         binding?.heroTunnel = tunnel
-        if (changed) binding?.tunnelList?.adapter?.notifyDataSetChanged()
+        if (changed || forceSelectionRefresh) refreshTunnelRows()
         updatePowerControls()
         lifecycleScope.launch { refreshSubscriptionTarget() }
+    }
+
+    private fun refreshTunnelRows() {
+        val recyclerView = binding?.tunnelList ?: return
+        updateVisibleTunnelRows(recyclerView)
+        recyclerView.adapter?.notifyDataSetChanged()
+        recyclerView.post { updateVisibleTunnelRows(recyclerView) }
+    }
+
+    private fun updateVisibleTunnelRows(recyclerView: androidx.recyclerview.widget.RecyclerView) {
+        for (index in 0 until recyclerView.childCount) {
+            val holder = recyclerView.getChildViewHolder(recyclerView.getChildAt(index))
+                as? com.wireguard.android.databinding.ObservableKeyedRecyclerViewAdapter.ViewHolder
+                ?: continue
+            val rowBinding = holder.binding as? TunnelListItemBinding ?: continue
+            (rowBinding.root as MultiselectableRelativeLayout).setSingleSelected(rowBinding.item === heroTunnel)
+            rowBinding.tunnelActiveIndicator.visibility =
+                if (rowBinding.item === activeTunnel) View.VISIBLE else View.GONE
+        }
+    }
+
+    private fun attachTunnelList(tunnels: ObservableKeyedArrayList<String, ObservableTunnel>) {
+        if (observedTunnelList !== tunnels) {
+            observedTunnelList?.removeOnListChangedCallback(tunnelListCallback)
+            observedTunnelList = tunnels
+            tunnels.addOnListChangedCallback(tunnelListCallback)
+        }
+        observeTunnelStates(tunnels)
+    }
+
+    private fun observeTunnelStates(tunnels: Iterable<ObservableTunnel>) {
+        val current = tunnels.toSet()
+        (observedTunnels - current).forEach { tunnel ->
+            tunnel.removeOnPropertyChangedCallback(tunnelStateCallback)
+            observedTunnels.remove(tunnel)
+        }
+        (current - observedTunnels).forEach { tunnel ->
+            tunnel.addOnPropertyChangedCallback(tunnelStateCallback)
+            observedTunnels.add(tunnel)
+        }
+        scheduleActiveTunnelRefresh()
+    }
+
+    private fun scheduleActiveTunnelRefresh() {
+        // GoBackend reports state from its worker thread. Queueing the presentation update keeps
+        // Android views on the main thread and prevents UI exceptions from aborting tunnel setup.
+        mainHandler.removeCallbacks(activeTunnelRefreshRunnable)
+        mainHandler.post(activeTunnelRefreshRunnable)
+    }
+
+    private fun refreshActiveTunnelOnMainThread() {
+        val next = observedTunnels.firstOrNull { it.state == Tunnel.State.UP }
+        if (activeTunnel !== next) {
+            activeTunnel = next
+            binding?.activeTunnel = next
+            refreshTunnelRows()
+        }
+        updatePowerControls()
     }
 
     private fun setPowerTransitioning(transitioning: Boolean) {
@@ -369,6 +520,7 @@ class TunnelListFragment : BaseFragment() {
             mainPowerButton.contentDescription = getString(
                 if (isPowerTransitioning && isPowerStarting) R.string.main_cancel_connection else R.string.main_toggle_tunnel
             )
+            mainPowerButton.isActivated = activeTunnel != null
             mainPowerButton.setAnimating(isPowerTransitioning)
             portalBackground.setConnecting(isPowerTransitioning && isPowerStarting)
             if (isPowerTransitioning) {
@@ -378,12 +530,12 @@ class TunnelListFragment : BaseFragment() {
                 heroTunnelName.setText(
                     when {
                         heroTunnel == null -> R.string.main_no_tunnel
-                        heroTunnel?.state == Tunnel.State.UP -> R.string.main_connected
+                        activeTunnel != null -> R.string.main_connected
                         else -> R.string.main_ready
                     }
                 )
                 heroHint.setText(R.string.main_ready_hint)
-                heroHint.visibility = if (heroTunnel != null && heroTunnel?.state != Tunnel.State.UP) View.VISIBLE else View.GONE
+                heroHint.visibility = if (heroTunnel != null && activeTunnel == null) View.VISIBLE else View.GONE
             }
         }
     }
@@ -439,20 +591,30 @@ class TunnelListFragment : BaseFragment() {
             return
         }
         val binding = binding ?: return
+        Log.i(TAG, "Manual subscription refresh requested for ${tunnel.name}")
         binding.subscriptionRefresh.isEnabled = false
         binding.subscriptionRefreshIcon.animate().rotationBy(360f).setDuration(600L).start()
+        showSubscriptionProgress(binding)
         lifecycleScope.launch {
             try {
-                val message = when (Application.getSubscriptionManager().update(tunnel.name)) {
+                val report = Application.getSubscriptionManager().updateSubscription(tunnel.name)
+                val message = when (report.result) {
                     SubscriptionManager.UpdateResult.Unchanged -> R.string.subscription_unchanged
                     SubscriptionManager.UpdateResult.Updated -> R.string.subscription_updated
                     SubscriptionManager.UpdateResult.Disabled -> R.string.subscription_disabled
                     SubscriptionManager.UpdateResult.Enabled -> R.string.subscription_enabled
                     is SubscriptionManager.UpdateResult.Added -> R.string.subscription_updated
                 }
-                showSnackbar(getString(message))
+                val resultText = getString(message, report.checkedProfiles.size)
+                Log.i(
+                    TAG,
+                    "Manual subscription refresh finished for ${tunnel.name}: " +
+                        "${report.result.javaClass.simpleName}, profiles=${report.checkedProfiles.joinToString()}",
+                )
+                showSubscriptionResult(resultText)
             } catch (e: Throwable) {
-                showSnackbar(ErrorMessages[e])
+                Log.e(TAG, "Manual subscription refresh failed for ${tunnel.name}", e)
+                showSubscriptionResult(ErrorMessages[e])
             } finally {
                 binding.subscriptionRefresh.isEnabled = true
                 refreshSubscriptionTarget()
@@ -461,7 +623,7 @@ class TunnelListFragment : BaseFragment() {
     }
 
     private fun checkLatency() {
-        val tunnel = heroTunnel
+        val tunnel = activeTunnel
         if (tunnel == null || tunnel.state != Tunnel.State.UP) {
             showSnackbar(getString(R.string.latency_connect_first))
             return
@@ -473,6 +635,7 @@ class TunnelListFragment : BaseFragment() {
         lifecycleScope.launch {
             try {
                 val latency = measureLatency()
+                Log.i(TAG, "Latency check through ${tunnel.name}: $latency ms")
                 binding.latencyResult.text = getString(R.string.latency_result, latency)
                 binding.latencyResult.visibility = View.VISIBLE
             } catch (e: Throwable) {
@@ -485,39 +648,34 @@ class TunnelListFragment : BaseFragment() {
     }
 
     private suspend fun measureLatency(): Long = withContext(Dispatchers.IO) {
-        var selectedEndpoint: LatencyEndpoint? = null
-        val samples = mutableListOf<Long>()
-
-        for (round in 0 until LATENCY_DISCOVERY_ROUNDS) {
-            for (endpoint in LATENCY_ENDPOINTS) {
+        val samples = buildList {
+            repeat(LATENCY_REQUEST_COUNT) {
                 try {
-                    samples += measureLatency(endpoint)
-                    selectedEndpoint = endpoint
-                    break
-                } catch (_: IOException) {
-                    // Try the next independent endpoint; some networks block individual probes.
+                    add(measureLatencyRequest())
+                } catch (e: IOException) {
+                    Log.w(TAG, "Latency GET request failed", e)
                 }
             }
-            if (selectedEndpoint != null) break
-            if (round + 1 < LATENCY_DISCOVERY_ROUNDS) delay(LATENCY_RETRY_DELAY_MS)
         }
-
-        val endpoint = selectedEndpoint ?: throw IOException("No latency endpoint responded")
-        repeat(LATENCY_SAMPLE_COUNT - 1) {
-            delay(LATENCY_SAMPLE_DELAY_MS)
-            try {
-                samples += measureLatency(endpoint)
-            } catch (_: IOException) {
-                // The successful discovery sample is sufficient if a follow-up probe is lost.
-            }
-        }
-        samples.sorted()[samples.size / 2]
+        samples.minOrNull() ?: throw IOException("Both latency GET requests failed")
     }
 
-    private fun measureLatency(endpoint: LatencyEndpoint): Long {
+    private fun measureLatencyRequest(): Long {
         val startedAt = System.nanoTime()
-        Socket().use { socket ->
-            socket.connect(InetSocketAddress(endpoint.host, endpoint.port), LATENCY_TIMEOUT_MS)
+        val connection = URL(LATENCY_URL).openConnection() as HttpsURLConnection
+        try {
+            connection.instanceFollowRedirects = false
+            connection.connectTimeout = LATENCY_TIMEOUT_MS
+            connection.readTimeout = LATENCY_TIMEOUT_MS
+            connection.requestMethod = "GET"
+            connection.useCaches = false
+            connection.setRequestProperty("Accept", "*/*")
+            connection.setRequestProperty("User-Agent", Application.USER_AGENT)
+            val status = connection.responseCode
+            if (status != HttpURLConnection.HTTP_NO_CONTENT)
+                throw IOException("Unexpected latency probe HTTP status: $status")
+        } finally {
+            connection.disconnect()
         }
         return (System.nanoTime() - startedAt) / 1_000_000L
     }
@@ -650,18 +808,9 @@ class TunnelListFragment : BaseFragment() {
     }
 
     companion object {
-        private data class LatencyEndpoint(val host: String, val port: Int)
-
-        private val LATENCY_ENDPOINTS = listOf(
-            LatencyEndpoint("1.1.1.1", 443),
-            LatencyEndpoint("8.8.8.8", 443),
-            LatencyEndpoint("9.9.9.9", 443),
-        )
-        private const val LATENCY_DISCOVERY_ROUNDS = 2
-        private const val LATENCY_SAMPLE_COUNT = 3
-        private const val LATENCY_TIMEOUT_MS = 1_500
-        private const val LATENCY_RETRY_DELAY_MS = 400L
-        private const val LATENCY_SAMPLE_DELAY_MS = 120L
+        private const val LATENCY_URL = "https://www.gstatic.com/generate_204"
+        private const val LATENCY_REQUEST_COUNT = 2
+        private const val LATENCY_TIMEOUT_MS = 5_000
         private const val CONNECTION_MESSAGE_INTERVAL_MS = 2_300L
         private const val CHECKED_ITEMS = "CHECKED_ITEMS"
         private const val TAG = "WireGuard/TunnelListFragment"

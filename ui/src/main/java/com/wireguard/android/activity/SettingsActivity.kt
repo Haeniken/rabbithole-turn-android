@@ -25,6 +25,7 @@ import androidx.preference.CheckBoxPreference
 import androidx.preference.EditTextPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
+import com.google.android.material.snackbar.Snackbar
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.wireguard.android.Application
 import com.wireguard.android.QuickTileService
@@ -34,6 +35,7 @@ import com.wireguard.android.fragment.AppListDialogFragment
 import com.wireguard.android.preference.DynamicDefaultEditTextPreference
 import com.wireguard.android.preference.PreferencesPreferenceDataStore
 import com.wireguard.android.routing.ManualRouteExclusions
+import com.wireguard.android.routing.RoutingListManager
 import com.wireguard.android.routing.RoutingListUpdateWorker
 import com.wireguard.android.subscription.SubscriptionSettings
 import com.wireguard.android.subscription.SubscriptionUpdateWorker
@@ -41,6 +43,7 @@ import com.wireguard.android.updater.Updater
 import com.wireguard.android.util.AdminKnobs
 import com.wireguard.android.util.CaptchaBrowserProfile
 import com.wireguard.android.util.GlobalAppExclusions
+import com.wireguard.android.util.QuantityFormatter
 import com.wireguard.android.util.TurnUserAgentSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -119,12 +122,11 @@ class SettingsActivity : AppCompatActivity() {
 
         override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
             super.onCreatePreferences(savedInstanceState, rootKey)
-            preferenceScreen.initialExpandedChildrenCount = 7
+            preferenceScreen.initialExpandedChildrenCount = 5
 
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || QuickTileService.isAdded) {
                 val quickTile = preferenceManager.findPreference<Preference>("quick_tile")
                 quickTile?.parent?.removePreference(quickTile)
-                --preferenceScreen.initialExpandedChildrenCount
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val darkTheme = preferenceManager.findPreference<Preference>("dark_theme")
@@ -362,19 +364,61 @@ class SettingsActivity : AppCompatActivity() {
             update.setOnPreferenceClickListener {
                 update.isEnabled = false
                 update.summary = getString(R.string.routing_lists_updating)
+                val hostView = requireView()
+                val progressSnackbar = Snackbar.make(hostView, "", Snackbar.LENGTH_INDEFINITE)
+                    .setBackgroundTint(requireContext().getColor(R.color.rabbit_surface_high))
+                    .setTextColor(requireContext().getColor(R.color.rabbit_text_primary))
+                    .setActionTextColor(requireContext().getColor(R.color.rabbit_accent_soft))
+                    .setTextMaxLines(4)
+                fun showProgress(progress: RoutingListManager.UpdateProgress) {
+                    hostView.post {
+                        if (!isAdded) return@post
+                        val text = when (progress) {
+                            is RoutingListManager.UpdateProgress.Downloading -> {
+                                if (progress.bytesTotal > 0) {
+                                    getString(
+                                        R.string.routing_lists_download_progress,
+                                        progress.fileName,
+                                        QuantityFormatter.formatBytes(progress.bytesDownloaded),
+                                        QuantityFormatter.formatBytes(progress.bytesTotal),
+                                        progress.bytesDownloaded.toDouble() * 100.0 / progress.bytesTotal.toDouble(),
+                                    )
+                                } else {
+                                    getString(
+                                        R.string.routing_lists_download_progress_nototal,
+                                        progress.fileName,
+                                        QuantityFormatter.formatBytes(progress.bytesDownloaded),
+                                    )
+                                }
+                            }
+                            RoutingListManager.UpdateProgress.Validating ->
+                                getString(R.string.routing_lists_validating)
+                        }
+                        progressSnackbar.setText(text)
+                        if (!progressSnackbar.isShown) progressSnackbar.show()
+                    }
+                }
                 lifecycleScope.launch {
                     try {
-                        withContext(Dispatchers.IO) { Application.getRoutingListManager().update() }
+                        withContext(Dispatchers.IO) {
+                            Application.getRoutingListManager().update(::showProgress)
+                        }
                         RoutingListUpdateWorker.schedulePeriodic(requireContext())
+                        progressSnackbar.dismiss()
                         refreshStatus()
                         Toast.makeText(requireContext(), R.string.routing_lists_updated, Toast.LENGTH_LONG).show()
                     } catch (e: Throwable) {
                         val error = e.localizedMessage ?: e.javaClass.simpleName
-                        update.summary = if (Application.getRoutingListManager().hasData()) {
+                        val usingCache = Application.getRoutingListManager().hasData()
+                        val failureText = if (usingCache) {
                             getString(R.string.routing_lists_update_failed_using_cache, error)
                         } else {
                             getString(R.string.routing_lists_update_failed, error)
                         }
+                        update.summary = failureText
+                        progressSnackbar.duration = Snackbar.LENGTH_LONG
+                        progressSnackbar.setText(failureText)
+                        progressSnackbar.show()
                     } finally {
                         update.isEnabled = true
                     }

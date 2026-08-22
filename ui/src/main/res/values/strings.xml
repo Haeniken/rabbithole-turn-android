@@ -124,11 +124,12 @@
     <string name="subscription_disabled_error">This subscription was disabled by the provider. Use “Update subscription” after it is enabled again.</string>
     <string name="subscription_metadata_invalid">Subscription data is damaged. Add the subscription again before connecting.</string>
     <string name="subscription_update">Update subscription</string>
+    <string name="subscription_checking">Checking subscription…</string>
     <string name="subscription_updating">Updating subscription…</string>
-    <string name="subscription_unchanged">Subscription is already up to date</string>
-    <string name="subscription_updated">Subscription configuration updated</string>
-    <string name="subscription_disabled">Subscription was disabled by the provider; the tunnel has been stopped</string>
-    <string name="subscription_enabled">Subscription is active again</string>
+    <string name="subscription_unchanged">Subscription is up to date · checked servers: %1$d</string>
+    <string name="subscription_updated">Subscription updated · checked servers: %1$d</string>
+    <string name="subscription_disabled">Subscription disabled by provider · stopped servers: %1$d</string>
+    <string name="subscription_enabled">Subscription is active again · checked servers: %1$d</string>
     <string name="subscription_expires">Valid until %s</string>
     <string name="main_secure_route">Private route</string>
     <string name="main_no_tunnel">No connection selected</string>
@@ -146,7 +147,7 @@
     <string name="main_turn_profile">Portal</string>
     <string name="main_wireguard_profile">Portal</string>
     <string name="latency_check">Check latency</string>
-    <string name="latency_connect_first">Connect the selected tunnel before checking latency</string>
+    <string name="latency_connect_first">Connect a tunnel before checking latency</string>
     <string name="latency_result">%d ms</string>
     <string name="latency_failed">Unable to measure latency: %s</string>
     <string name="latency_no_response">No response through the VPN yet. Wait a moment and try again.</string>
@@ -270,6 +271,9 @@
     <string name="routing_lists_never_updated">Geodata has not been downloaded yet</string>
     <string name="routing_lists_status">Updated %1$s · CIDRs: %2$d · domain rules: %3$d · resolved addresses: %4$d</string>
     <string name="routing_lists_updating">Downloading and validating GeoIP and GeoSite…</string>
+    <string name="routing_lists_download_progress">Downloading %1$s: %2$s / %3$s (%4$.2f%%)</string>
+    <string name="routing_lists_download_progress_nototal">Downloading %1$s: %2$s</string>
+    <string name="routing_lists_validating">Validating geodata and preparing routes…</string>
     <string name="routing_lists_updated">Routing geodata updated</string>
     <string name="routing_lists_update_failed">Update failed: %s</string>
     <string name="routing_lists_update_failed_using_cache">Update failed: %s. The previously downloaded geodata remains active.</string>

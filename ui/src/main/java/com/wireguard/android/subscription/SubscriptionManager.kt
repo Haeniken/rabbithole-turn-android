@@ -39,18 +39,39 @@ class SubscriptionManager(
         data object Enabled : UpdateResult()
     }
 
+    data class UpdateReport(
+        val result: UpdateResult,
+        val checkedProfiles: List<String>,
+    )
+
     suspend fun add(url: String): UpdateResult.Added = operationMutex.withLock {
-        val normalizedUrl = url.trim()
-        val response = fetchSubscription(normalizedUrl, MAX_BUNDLE_BYTES)
-        if (response.status != 200) throw IOException(context.getString(R.string.subscription_add_http_error, response.status))
-        if (SubscriptionBundle.isMediaType(response.contentType)) {
-            addBundle(normalizedUrl, response)
-        } else {
-            addLegacy(normalizedUrl, response)
+        Log.i(TAG, "Adding subscription")
+        try {
+            val normalizedUrl = url.trim()
+            val response = fetchSubscription(normalizedUrl, MAX_BUNDLE_BYTES)
+            if (response.status != 200) throw IOException(context.getString(R.string.subscription_add_http_error, response.status))
+            val result = if (SubscriptionBundle.isMediaType(response.contentType)) {
+                addBundle(normalizedUrl, response)
+            } else {
+                addLegacy(normalizedUrl, response)
+            }
+            Log.i(TAG, "Subscription added: profiles=${result.tunnels.size}")
+            result
+        } catch (e: Throwable) {
+            Log.e(TAG, "Unable to add subscription", e)
+            throw e
         }
     }
 
     suspend fun update(tunnelName: String): UpdateResult = operationMutex.withLock {
+        updateLocked(tunnelName).result
+    }
+
+    /**
+     * Updates the subscription containing [tunnelName]. For a bundle, the selected tunnel is
+     * only used to locate the subscription: every profile in that bundle is checked and applied.
+     */
+    suspend fun updateSubscription(tunnelName: String): UpdateReport = operationMutex.withLock {
         updateLocked(tunnelName)
     }
 
@@ -64,7 +85,6 @@ class SubscriptionManager(
             try {
                 updateLocked(record.tunnelName)
             } catch (e: Throwable) {
-                Log.w(TAG, "Unable to update subscription for ${record.tunnelName}", e)
                 allSuccessful = false
             }
         }
@@ -145,9 +165,37 @@ class SubscriptionManager(
         return UpdateResult.Added(created, subscriptionName)
     }
 
-    private suspend fun updateLocked(tunnelName: String): UpdateResult {
-        val record = store.load(tunnelName) ?: throw IllegalArgumentException(context.getString(R.string.subscription_not_found))
-        return if (record.bundleId == null) updateLegacy(record) else updateBundle(record)
+    private suspend fun updateLocked(tunnelName: String): UpdateReport {
+        return try {
+            val record = store.load(tunnelName)
+                ?: throw IllegalArgumentException(context.getString(R.string.subscription_not_found))
+            val checkedRecords = record.bundleId
+                ?.let(store::recordsForBundle)
+                ?.takeIf { it.isNotEmpty() }
+                ?: listOf(record)
+            val checkedProfiles = checkedRecords.map { it.tunnelName }.sorted()
+            val scope = if (record.bundleId == null) {
+                "profile ${record.tunnelName}"
+            } else {
+                "entire bundle ${record.subscriptionName ?: record.bundleId.take(12)} " +
+                    "(${checkedProfiles.size} profiles: ${checkedProfiles.joinToString()})"
+            }
+            Log.i(TAG, "Checking subscription $scope")
+            val result = if (record.bundleId == null) updateLegacy(record) else updateBundle(record)
+            Log.i(TAG, "Subscription check finished for $scope: ${result.logLabel()}")
+            UpdateReport(result, checkedProfiles)
+        } catch (e: Throwable) {
+            Log.e(TAG, "Unable to update subscription for $tunnelName", e)
+            throw e
+        }
+    }
+
+    private fun UpdateResult.logLabel(): String = when (this) {
+        is UpdateResult.Added -> "added"
+        UpdateResult.Unchanged -> "up-to-date"
+        UpdateResult.Updated -> "updated"
+        UpdateResult.Disabled -> "disabled"
+        UpdateResult.Enabled -> "enabled"
     }
 
     private suspend fun updateLegacy(record: SubscriptionStore.Record): UpdateResult {

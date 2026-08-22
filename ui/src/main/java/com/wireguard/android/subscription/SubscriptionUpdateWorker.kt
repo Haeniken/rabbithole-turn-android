@@ -23,7 +23,14 @@ class SubscriptionUpdateWorker(
     workerParams: WorkerParameters,
 ) : CoroutineWorker(appContext, workerParams) {
     override suspend fun doWork(): Result = try {
-        if (Application.getSubscriptionManager().updateAll()) Result.success() else Result.retry()
+        Log.i(TAG, "Automatic subscription check started")
+        if (Application.getSubscriptionManager().updateAll()) {
+            Log.i(TAG, "Automatic subscription check finished")
+            Result.success()
+        } else {
+            Log.w(TAG, "Automatic subscription check completed with errors")
+            Result.retry()
+        }
     } catch (e: Throwable) {
         Log.w(TAG, "Unable to update subscriptions", e)
         Result.retry()

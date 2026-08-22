@@ -10,6 +10,7 @@
 
         <variable name="fragment" type="com.wireguard.android.fragment.TunnelListFragment" />
         <variable name="heroTunnel" type="com.wireguard.android.model.ObservableTunnel" />
+        <variable name="activeTunnel" type="com.wireguard.android.model.ObservableTunnel" />
         <variable
             name="rowConfigurationHandler"
             type="com.wireguard.android.databinding.ObservableKeyedRecyclerViewAdapter.RowConfigurationHandler" />
@@ -30,7 +31,7 @@
             android:layout_width="0dp"
             android:layout_height="0dp"
             android:importantForAccessibility="no"
-            app:portalActive="@{heroTunnel != null &amp;&amp; heroTunnel.state == State.UP}"
+            app:portalActive="@{activeTunnel != null &amp;&amp; activeTunnel.state == State.UP}"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
@@ -173,7 +174,7 @@
                     android:fontFamily="@font/exo2_semibold"
                     android:letterSpacing="0.045"
                     android:maxLines="3"
-                    android:text="@{heroTunnel == null ? @string/main_no_tunnel : (heroTunnel.state == State.UP ? @string/main_connected : @string/main_ready)}"
+                    android:text="@{heroTunnel == null ? @string/main_no_tunnel : (activeTunnel != null &amp;&amp; activeTunnel.state == State.UP ? @string/main_connected : @string/main_ready)}"
                     android:textColor="@color/rabbit_text_primary"
                     android:textSize="@dimen/main_hero_title_text_size"
                     tools:text="ПРЫЖОК В НОРУ" />
@@ -190,7 +191,7 @@
                     android:textColor="@color/rabbit_text_secondary"
                     android:textSize="@dimen/main_hero_status_text_size"
                     android:textStyle="italic"
-                    android:visibility="@{heroTunnel != null &amp;&amp; heroTunnel.state != State.UP ? View.VISIBLE : View.GONE}"
+                    android:visibility="@{heroTunnel != null &amp;&amp; (activeTunnel == null || activeTunnel.state != State.UP) ? View.VISIBLE : View.GONE}"
                     tools:text="Следуем за белым кроликом…"
                     tools:visibility="visible" />
             </LinearLayout>
@@ -200,7 +201,7 @@
                 android:layout_width="@dimen/main_power_size"
                 android:layout_height="@dimen/main_power_size"
                 android:layout_marginEnd="@dimen/main_power_end_margin"
-                android:activated="@{heroTunnel != null &amp;&amp; heroTunnel.state == State.UP}"
+                android:activated="@{activeTunnel != null &amp;&amp; activeTunnel.state == State.UP}"
                 android:clickable="true"
                 android:contentDescription="@string/main_toggle_tunnel"
                 android:focusable="true"

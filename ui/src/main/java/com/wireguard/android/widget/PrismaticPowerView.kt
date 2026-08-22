@@ -48,7 +48,6 @@ class PrismaticPowerView @JvmOverloads constructor(
     private val accent = ContextCompat.getColor(context, R.color.rabbit_accent)
     private val accentSoft = ContextCompat.getColor(context, R.color.rabbit_accent_soft)
     private val activeColor = ContextCompat.getColor(context, R.color.rabbit_power_active)
-    private val successColor = ContextCompat.getColor(context, R.color.rabbit_success)
 
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val bevelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
@@ -95,7 +94,6 @@ class PrismaticPowerView @JvmOverloads constructor(
         strokeJoin = Paint.Join.ROUND
         strokeWidth = 2.1f * density
     }
-    private val sparkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val idleFacetShaders = arrayOfNulls<Shader>(6)
     private val brightFacetShaders = arrayOfNulls<Shader>(6)
     private var idleFillShader: Shader? = null
@@ -147,8 +145,8 @@ class PrismaticPowerView @JvmOverloads constructor(
             cx - radius * 0.18f,
             cy - radius * 0.24f,
             radius * 1.35f,
-            Color.rgb(92, 38, 131),
-            Color.rgb(18, 9, 31),
+            Color.rgb(55, 24, 76),
+            Color.rgb(8, 4, 14),
             Shader.TileMode.CLAMP,
         )
         activeFillShader = RadialGradient(
@@ -164,7 +162,7 @@ class PrismaticPowerView @JvmOverloads constructor(
             cy - radius,
             cx + radius,
             cy + radius,
-            intArrayOf(0xFFF0D7FF.toInt(), 0xFF9C48DE.toInt(), 0xFF571A7C.toInt(), 0xFF210A30.toInt()),
+            intArrayOf(0xFF9C79AE.toInt(), 0xFF633184.toInt(), 0xFF351246.toInt(), 0xFF0B0410.toInt()),
             floatArrayOf(0f, 0.34f, 0.68f, 1f),
             Shader.TileMode.CLAMP,
         )
@@ -230,7 +228,7 @@ class PrismaticPowerView @JvmOverloads constructor(
         if (isEnabled && !requestedAnimating && !isActivated) drawIdlePulse(canvas, cx, cy)
         if (isActivated && !requestedAnimating) drawActiveAura(canvas, cx, cy, pulse)
 
-        bevelPaint.shader = if (isActivated) activeBevelShader else bevelShader
+        bevelPaint.shader = if (isActivated || requestedAnimating) activeBevelShader else bevelShader
         bevelPaint.alpha = if (requestedAnimating) 242 else 255
         canvas.drawPath(crystalPath, bevelPaint)
 
@@ -238,11 +236,11 @@ class PrismaticPowerView @JvmOverloads constructor(
         val faceScale = 0.862f + perspective * 0.004f
         canvas.save()
         canvas.scale(faceScale, faceScale - perspective * 0.002f, cx, cy)
-        fillPaint.shader = if (isActivated) activeFillShader else idleFillShader
+        fillPaint.shader = if (isActivated || requestedAnimating) activeFillShader else idleFillShader
         fillPaint.alpha = when {
             isActivated -> 255
             requestedAnimating -> 232
-            else -> 218
+            else -> 198
         }
         canvas.drawPath(crystalPath, fillPaint)
 
@@ -252,7 +250,7 @@ class PrismaticPowerView @JvmOverloads constructor(
         highlightPaint.alpha = when {
             requestedAnimating -> (42f + pulse * 48f).toInt()
             isActivated -> (35f + pulse * 38f).toInt()
-            else -> (22f + pulse * 24f).toInt()
+            else -> (12f + pulse * 18f).toInt()
         }
         val highlightTravel = ((phase * 5f) % 1f) * radius * 4.4f - radius * 2.2f
         highlightMatrix.reset()
@@ -264,22 +262,34 @@ class PrismaticPowerView @JvmOverloads constructor(
         lensPaint.alpha = when {
             requestedAnimating -> (32f + pulse * 44f).toInt()
             isActivated -> (58f + pulse * 42f).toInt()
-            else -> (34f + pulse * 24f).toInt()
+            else -> (18f + pulse * 18f).toInt()
         }
         canvas.drawPath(crystalPath, lensPaint)
 
         innerOutlinePaint.color = activeColor
-        innerOutlinePaint.alpha = if (isActivated) 168 else 92
+        innerOutlinePaint.alpha = when {
+            isActivated -> 168
+            requestedAnimating -> 142
+            else -> 62
+        }
         canvas.drawPath(crystalPath, innerOutlinePaint)
         canvas.restore()
 
         outlinePaint.color = if (isActivated) Color.WHITE else accentSoft
-        outlinePaint.alpha = if (isActivated) 220 else 155
+        outlinePaint.alpha = when {
+            isActivated -> 220
+            requestedAnimating -> 205
+            else -> 105
+        }
         outlinePaint.strokeWidth = 1.1f * density
         canvas.drawPath(crystalPath, outlinePaint)
 
         brightEdgePaint.color = Color.WHITE
-        brightEdgePaint.alpha = if (isActivated) 235 else 178
+        brightEdgePaint.alpha = when {
+            isActivated -> 235
+            requestedAnimating -> 220
+            else -> 112
+        }
         canvas.drawPath(brightEdgePath, brightEdgePaint)
         darkEdgePaint.color = if (isActivated) 0xFF50106F.toInt() else 0xFF170621.toInt()
         darkEdgePaint.alpha = if (requestedAnimating) 195 else 220
@@ -291,7 +301,6 @@ class PrismaticPowerView @JvmOverloads constructor(
         }
 
         drawCenterGlyph(canvas, cx, cy, radius)
-        if (isActivated && !requestedAnimating) drawSuccessSpark(canvas, cx, cy, radius)
         canvas.restore()
     }
 
@@ -404,17 +413,6 @@ class PrismaticPowerView @JvmOverloads constructor(
 
         canvas.drawCircle(cx, cy - glyphRadius * 0.35f, glyphRadius, glyphPaint)
         canvas.drawLine(cx, cy + glyphRadius * 0.65f, cx, cy + glyphRadius * 2.05f, glyphPaint)
-    }
-
-    private fun drawSuccessSpark(canvas: Canvas, cx: Float, cy: Float, radius: Float) {
-        val x = cx + radius * 0.78f
-        val y = cy - radius * 0.62f
-        sparkPaint.color = successColor
-        sparkPaint.alpha = 255
-        canvas.drawCircle(x, y, 3.2f * density, sparkPaint)
-        sparkPaint.color = Color.WHITE
-        sparkPaint.alpha = 165
-        canvas.drawCircle(x - density, y - density, density, sparkPaint)
     }
 
     override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {

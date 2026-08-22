@@ -323,17 +323,14 @@ class LogViewerActivity : AppCompatActivity() {
     }
 
     private fun groupFor(line: LogLine): LogGroup {
-        val searchable = "${line.tag} ${line.msg}".lowercase(Locale.ROOT)
-        return when {
-            searchable.containsAny("subscription", "subscrib", "profile update") -> LogGroup.SUBSCRIPTION
-            searchable.containsAny("routinglist", "routing list", "routeexcluder", "excluded route", "georouting", "geoip", "geosite", "ru-direct") -> LogGroup.ROUTING
-            searchable.containsAny("turn", "captcha", "coturn", "webview") -> LogGroup.TURN
-            searchable.containsAny("wireguard", "gobackend", "wgquick", "tunnel", "vpnservice", "vpn service") -> LogGroup.TUNNEL
-            else -> LogGroup.APP
+        return when (classifyLogGroup(line.tag, line.msg)) {
+            LogGroupKind.TUNNEL -> LogGroup.TUNNEL
+            LogGroupKind.TURN -> LogGroup.TURN
+            LogGroupKind.SUBSCRIPTION -> LogGroup.SUBSCRIPTION
+            LogGroupKind.ROUTING -> LogGroup.ROUTING
+            LogGroupKind.APP -> LogGroup.APP
         }
     }
-
-    private fun String.containsAny(vararg needles: String) = needles.any(::contains)
 
     private fun effectiveLevel(line: LogLine): String {
         return effectiveLogLevel(line.level, line.msg)
@@ -352,6 +349,7 @@ class LogViewerActivity : AppCompatActivity() {
     private fun isRelevant(line: LogLine): Boolean =
         line.tag.startsWith("WireGuard/") ||
             line.tag.startsWith("RabbitHole/") ||
+            line.tag == "AndroidRuntime" ||
             line.tag == "QrCodeFromFileScanner"
 
     companion object {

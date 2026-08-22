@@ -20,7 +20,18 @@ internal fun effectiveLogLevel(rawLevel: String, rawMessage: String): String {
         message.contains("read/write on closed pipe")
     ) return "W"
     return if (
-        listOf(" error:", " failed:", " failed ", "exception", "timed out", "timeout")
+        listOf(
+            " error:",
+            " failed:",
+            " failed ",
+            "unable to ",
+            "cannot ",
+            "could not ",
+            "exception",
+            "invalid resource",
+            "timed out",
+            "timeout",
+        )
             .any(message::contains)
     ) "E" else rawLevel
 }

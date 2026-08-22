@@ -54,11 +54,21 @@ class RoutingListManager(
         val resolvedAddressCount: Int,
     )
 
+    sealed interface UpdateProgress {
+        data class Downloading(
+            val fileName: String,
+            val bytesDownloaded: Long,
+            val bytesTotal: Long,
+        ) : UpdateProgress
+
+        data object Validating : UpdateProgress
+    }
+
     /**
      * Downloads both data files, validates the required categories, then atomically activates the
      * complete pair. The previously active slot remains untouched until every step succeeds.
      */
-    suspend fun update(): Status = withContext(Dispatchers.IO) {
+    suspend fun update(onProgress: ((UpdateProgress) -> Unit)? = null): Status = withContext(Dispatchers.IO) {
         val currentPreferences = preferences.data.first()
         val geoIpUrl = currentPreferences[GEOIP_URL_KEY]?.ifBlank { null } ?: DEFAULT_GEOIP_URL
         val geoSiteUrl = currentPreferences[GEOSITE_URL_KEY]?.ifBlank { null } ?: DEFAULT_GEOSITE_URL
@@ -70,20 +80,26 @@ class RoutingListManager(
             currentPreferences[GEOSITE_CATEGORIES_KEY],
             DEFAULT_GEOSITE_CATEGORIES,
         )
+        Log.i(TAG, "Updating GeoIP/GeoSite data: geoip=${geoIpCategories.joinToString()}, geosite=${geoSiteCategories.joinToString()}")
 
-        val geoIpResponse = HttpsFetcher.get(geoIpUrl, MAX_GEOIP_BYTES)
+        val geoIpResponse = HttpsFetcher.get(geoIpUrl, MAX_GEOIP_BYTES) { downloaded, total ->
+            onProgress?.invoke(UpdateProgress.Downloading("GeoIP", downloaded, total))
+        }
         if (geoIpResponse.status != 200)
             throw IOException("GeoIP server returned HTTP ${geoIpResponse.status}")
         val cidrs = geoIpCategories
             .flatMap { V2RayGeoDataParser.parseIpCategory(geoIpResponse.body, it) }
             .distinct()
 
-        val geoSiteResponse = HttpsFetcher.get(geoSiteUrl, MAX_GEOSITE_BYTES)
+        val geoSiteResponse = HttpsFetcher.get(geoSiteUrl, MAX_GEOSITE_BYTES) { downloaded, total ->
+            onProgress?.invoke(UpdateProgress.Downloading("GeoSite", downloaded, total))
+        }
         if (geoSiteResponse.status != 200)
             throw IOException("GeoSite server returned HTTP ${geoSiteResponse.status}")
         val domainRules = geoSiteCategories
             .flatMap { V2RayGeoDataParser.parseDomainCategory(geoSiteResponse.body, it) }
             .distinct()
+        onProgress?.invoke(UpdateProgress.Validating)
         val resolvedAddresses = resolveDomains(domainRules)
 
         rootDirectory.mkdirs()
@@ -123,19 +139,28 @@ class RoutingListManager(
         // Validate the complete inactive slot once more before the one-file activation commit.
         readRoutes(target)
         replaceAtomically(activeSlotFile, "$targetName\n".toByteArray(StandardCharsets.UTF_8))
+        Log.i(
+            TAG,
+            "GeoIP/GeoSite data updated: cidrs=${status.cidrCount}, domains=${status.domainCount}, resolved=${status.resolvedAddressCount}",
+        )
         status
     }
 
     /** Uses a valid cache or downloads it on the first start of a profile that needs ru-direct. */
     suspend fun ensureDirectRoutes(): List<InetNetwork> = withContext(Dispatchers.IO) {
         try {
-            return@withContext requireDirectRoutes()
+            return@withContext requireDirectRoutes().also {
+                Log.i(TAG, "Using cached ru-direct routes: ${it.size} destinations")
+            }
         } catch (_: RoutingListsMissingException) {
             // A first-use download is required only for a profile carrying the routing directive.
+            Log.i(TAG, "No cached ru-direct data; downloading GeoIP/GeoSite before tunnel start")
         }
         try {
             update()
-            requireDirectRoutes()
+            requireDirectRoutes().also {
+                Log.i(TAG, "Prepared ru-direct routes after download: ${it.size} destinations")
+            }
         } catch (e: Throwable) {
             if (e is RoutingListsMissingException) throw e
             throw RoutingListsMissingException(context.getString(R.string.routing_lists_download_failed_error), e)
