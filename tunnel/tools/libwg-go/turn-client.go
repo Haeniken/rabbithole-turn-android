@@ -10,6 +10,7 @@ package main
 #include <stdlib.h>
 #include <android/log.h>
 extern int wgProtectSocket(int fd);
+extern int wgProtectSocketForNetwork(int fd, long long network_handle);
 extern const char* getNetworkDnsServers(long long network_handle);
 */
 import "C"
@@ -31,8 +32,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/cbeuw/connutil"
-	"github.com/google/uuid"
 	"github.com/pion/dtls/v3"
 	"github.com/pion/dtls/v3/pkg/crypto/selfsign"
 	"github.com/pion/logging"
@@ -50,6 +49,83 @@ func protectControl(network, address string, c syscall.RawConn) error {
 	return c.Control(func(fd uintptr) {
 		C.wgProtectSocket(C.int(fd))
 	})
+}
+
+func protectControlForNetwork(networkHandle int64) func(string, string, syscall.RawConn) error {
+	return func(network, address string, c syscall.RawConn) error {
+		return c.Control(func(fd uintptr) {
+			C.wgProtectSocketForNetwork(C.int(fd), C.longlong(networkHandle))
+		})
+	}
+}
+
+// logTCPSocketDiagnostics records the kernel values that matter when a TURN
+// allocation is carried over TCP. It deliberately does not tune them: this is
+// read-only instrumentation for separating application queueing from kernel
+// socket pressure and path-MTU effects on real Android networks.
+func logTCPSocketDiagnostics(streamID int, conn net.Conn) {
+	if !detailedTransportDiagnostics.Load() {
+		return
+	}
+	tcpConn, ok := conn.(*net.TCPConn)
+	if !ok {
+		return
+	}
+	rawConn, err := tcpConn.SyscallConn()
+	if err != nil {
+		turnLog("[STREAM %d] TCP diagnostics unavailable: %v", streamID, err)
+		return
+	}
+	sendBuffer, receiveBuffer, maxSegment, noDelay := -1, -1, -1, -1
+	var socketErr error
+	if err := rawConn.Control(func(fd uintptr) {
+		get := func(level, option int, target *int) {
+			if socketErr != nil {
+				return
+			}
+			*target, socketErr = syscall.GetsockoptInt(int(fd), level, option)
+		}
+		get(syscall.SOL_SOCKET, syscall.SO_SNDBUF, &sendBuffer)
+		get(syscall.SOL_SOCKET, syscall.SO_RCVBUF, &receiveBuffer)
+		get(syscall.IPPROTO_TCP, syscall.TCP_MAXSEG, &maxSegment)
+		get(syscall.IPPROTO_TCP, syscall.TCP_NODELAY, &noDelay)
+	}); err != nil {
+		turnLog("[STREAM %d] TCP diagnostics unavailable: %v", streamID, err)
+		return
+	}
+	if socketErr != nil {
+		turnLog("[STREAM %d] TCP diagnostics unavailable: %v", streamID, socketErr)
+		return
+	}
+	turnLog("[STREAM %d] TCP diagnostics: sndbuf=%d rcvbuf=%d mss=%d nodelay=%d", streamID, sendBuffer, receiveBuffer, maxSegment, noDelay)
+}
+
+func logUDPSocketDiagnostics(streamID int, conn *net.UDPConn) {
+	if !detailedTransportDiagnostics.Load() {
+		return
+	}
+	rawConn, err := conn.SyscallConn()
+	if err != nil {
+		turnLog("[STREAM %d] UDP diagnostics unavailable: %v", streamID, err)
+		return
+	}
+	sendBuffer, receiveBuffer := -1, -1
+	var socketErr error
+	if err := rawConn.Control(func(fd uintptr) {
+		sendBuffer, socketErr = syscall.GetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_SNDBUF)
+		if socketErr == nil {
+			receiveBuffer, socketErr = syscall.GetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF)
+		}
+	}); err != nil {
+		turnLog("[STREAM %d] UDP diagnostics unavailable: %v", streamID, err)
+		return
+	}
+	if socketErr != nil {
+		turnLog("[STREAM %d] UDP diagnostics unavailable: %v", streamID, socketErr)
+		return
+	}
+	turnLog("[STREAM %d] UDP diagnostics: sndbuf=%d rcvbuf=%d local=%s remote=%s setup-timeout=%v",
+		streamID, sendBuffer, receiveBuffer, conn.LocalAddr(), conn.RemoteAddr(), turnUDPSetupTimeout)
 }
 
 func init() {
@@ -85,11 +161,9 @@ var turnHTTPClient = &http.Client{
 }
 
 type stream struct {
-	ctx             context.Context
 	id              int
-	in              chan []byte
-	out             net.PacketConn
-	peer            atomic.Pointer[net.Addr] // Last seen addr from WireGuard
+	in              chan queuedPacket
+	recv            chan<- []byte
 	ready           atomic.Bool
 	sessionID       []byte
 	cert            *tls.Certificate
@@ -102,6 +176,14 @@ type stream struct {
 	lastPingSeq     atomic.Uint64
 	lastPongSeq     atomic.Uint64
 	probeRTT        atomic.Int64
+	probeLoss       atomic.Int64 // parts per million
+	queueWaitEWMA   atomic.Int64
+	writeWaitEWMA   atomic.Int64
+	errorPenalty    atomic.Int64
+	penaltyAt       atomic.Int64
+	networkHandle   int64
+	txPackets       atomic.Uint64
+	rxPackets       atomic.Uint64
 	txBytes         atomic.Uint64
 	rxBytes         atomic.Uint64
 }
@@ -111,6 +193,10 @@ const (
 	watchdogUnansweredTxLimit = 3
 	probeInterval             = 30 * time.Second
 	probeStaleThreshold       = 120 * time.Second
+	serverReorderCapability   = 0x80
+	turnUDPSetupTimeout       = 5 * time.Second
+	turnTransportTCPOnly      = 0
+	turnTransportUDPPreferred = 1
 )
 
 var packetPool = sync.Pool{
@@ -121,36 +207,156 @@ var packetPool = sync.Pool{
 
 // Metrics for diagnostics
 var (
-	dtlsTxDropCount    atomic.Uint64 // Drops in DTLS TX goroutine
-	dtlsRxErrorCount   atomic.Uint64 // Errors in DTLS RX goroutine
-	relayTxErrorCount  atomic.Uint64 // Errors in relay TX
-	relayRxErrorCount  atomic.Uint64 // Errors in relay RX
-	noDtlsTxDropCount  atomic.Uint64 // Drops in NoDTLS TX
-	noDtlsRxErrorCount atomic.Uint64 // Errors in NoDTLS RX
-	queueFullDropCount atomic.Uint64 // Local UDP packets dropped on a full stream queue
-	noReadyDropCount   atomic.Uint64 // Local UDP packets received while no stream was healthy
-	queuedPacketCount  atomic.Uint64
-	queuePeak          atomic.Uint64
-	streamReconnects   atomic.Uint64
-	turnQuotaErrors    atomic.Uint64
-	probeSentCount     atomic.Uint64
-	probeRecvCount     atomic.Uint64
-	probeZombieCount   atomic.Uint64
-	serverProbeable    atomic.Bool
+	dtlsTxDropCount              atomic.Uint64 // Drops in DTLS TX goroutine
+	dtlsRxErrorCount             atomic.Uint64 // Errors in DTLS RX goroutine
+	relayTxErrorCount            atomic.Uint64 // Errors in relay TX
+	relayRxErrorCount            atomic.Uint64 // Errors in relay RX
+	noDtlsTxDropCount            atomic.Uint64 // Drops in NoDTLS TX
+	noDtlsRxErrorCount           atomic.Uint64 // Errors in NoDTLS RX
+	queueFullDropCount           atomic.Uint64 // Local UDP packets dropped on a full stream queue
+	noReadyDropCount             atomic.Uint64 // Local UDP packets received while no stream was healthy
+	queuedPacketCount            atomic.Uint64
+	queuePeak                    atomic.Uint64
+	streamReconnects             atomic.Uint64
+	turnQuotaErrors              atomic.Uint64
+	turnUDPAttemptCount          atomic.Uint64
+	turnUDPAllocationCount       atomic.Uint64
+	turnUDPFailureCount          atomic.Uint64
+	turnTCPFallbackCount         atomic.Uint64
+	probeSentCount               atomic.Uint64
+	probeRecvCount               atomic.Uint64
+	probeZombieCount             atomic.Uint64
+	serverProbeable              atomic.Bool
+	rxQueueFullDrop              atomic.Uint64
+	queueResidence               durationHistogram
+	socketWriteDelay             durationHistogram
+	downlinkArrivalReorder       = newWGReorderStats()
+	downlinkReorder              = newWGReorderStats()
+	detailedTransportDiagnostics atomic.Bool
 )
 
-func (s *stream) run(link string, peer *net.UDPAddr, udp bool, okchan chan<- struct{}, turnIp string, turnPort int, peerType string) {
+func shouldFallbackFromUDP(ctx context.Context, err error) bool {
+	return err != nil && ctx.Err() == nil && !isAuthError(err) && !isAllocationQuotaError(err)
+}
+
+func (s *stream) runTurnTransport(
+	ctx context.Context,
+	addr, user, pass string,
+	lease *credentialLease,
+	peer *net.UDPAddr,
+	okchan chan<- struct{},
+	peerType string,
+	useUDP bool,
+) error {
+	transportName := "TCP"
+	if useUDP {
+		transportName = "UDP"
+		turnUDPAttemptCount.Add(1)
+	}
+	turnLog("[STREAM %d] Dialing TURN/%s server %s...", s.id, transportName, addr)
+	dialer := &net.Dialer{
+		Timeout: 30 * time.Second,
+		Control: protectControlForNetwork(s.networkHandle),
+	}
+
+	var rawConn net.Conn
+	var turnConn net.PacketConn
+	var udpSetupTimedOut atomic.Bool
+	var udpSetupFinished atomic.Bool
+	var udpSetupTimer *time.Timer
+	if useUDP {
+		conn, err := dialer.DialContext(ctx, "udp", addr)
+		if err != nil {
+			return fmt.Errorf("TURN UDP dial failed: %w", err)
+		}
+		rawConn = conn
+		udpConn := conn.(*net.UDPConn)
+		logUDPSocketDiagnostics(s.id, udpConn)
+		turnConn = &connectedUDPConn{udpConn}
+		udpSetupTimer = time.AfterFunc(turnUDPSetupTimeout, func() {
+			if udpSetupFinished.CompareAndSwap(false, true) {
+				udpSetupTimedOut.Store(true)
+				_ = rawConn.Close()
+			}
+		})
+	} else {
+		conn, err := dialer.DialContext(ctx, "tcp", addr)
+		if err != nil {
+			return fmt.Errorf("TURN TCP dial failed: %w", err)
+		}
+		rawConn = conn
+		logTCPSocketDiagnostics(s.id, conn)
+		turnConn = newTurnTCPPacketConn(conn)
+	}
+	defer rawConn.Close()
+	if udpSetupTimer != nil {
+		defer udpSetupTimer.Stop()
+	}
+
+	client, err := turn.NewClient(&turn.ClientConfig{
+		STUNServerAddr: addr, TURNServerAddr: addr, Username: user, Password: pass,
+		Conn: turnConn, LoggerFactory: logging.NewDefaultLoggerFactory(),
+	})
+	if err != nil {
+		return fmt.Errorf("TURN client creation failed: %w", err)
+	}
+	defer client.Close()
+	if err := client.Listen(); err != nil {
+		if isAuthError(err) {
+			lease.recordAuthError()
+		}
+		return fmt.Errorf("TURN listen failed: %w", err)
+	}
+
+	turnLog("[STREAM %d] Requesting TURN/%s allocation...", s.id, transportName)
+	relayConn, err := client.Allocate()
+	if udpSetupTimer != nil {
+		if udpSetupFinished.CompareAndSwap(false, true) {
+			udpSetupTimer.Stop()
+		}
+	}
+	if udpSetupTimedOut.Load() {
+		if err == nil {
+			relayConn.Close()
+		}
+		return fmt.Errorf("TURN/UDP setup timed out after %v", turnUDPSetupTimeout)
+	}
+	if err != nil {
+		if isAuthError(err) {
+			lease.recordAuthError()
+		}
+		if isAllocationQuotaError(err) {
+			turnQuotaErrors.Add(1)
+			s.noteErrorPenalty(500 * time.Millisecond)
+			cooldown := lease.markSaturated()
+			turnLog("[STREAM %d] TURN allocation quota reached; credential slot %d cooling down for %v", s.id, lease.slot, cooldown)
+		}
+		return fmt.Errorf("TURN allocation failed: %w", err)
+	}
+	defer relayConn.Close()
+	if useUDP {
+		turnUDPAllocationCount.Add(1)
+	}
+
+	turnLog("[STREAM %d] Allocated relay address over TURN/%s: %s", s.id, transportName, relayConn.LocalAddr())
+	if peerType == "wireguard" {
+		return s.runNoDTLS(ctx, relayConn, peer, okchan)
+	}
+	return s.runDTLS(ctx, relayConn, peer, okchan, peerType != "proxy_v1")
+}
+
+func (s *stream) run(ctx context.Context, link string, peer *net.UDPAddr, preferUDP bool, okchan chan<- struct{}, turnIp string, turnPort int, peerType string) {
 	reconnectAttempt := 0
 	for {
 		select {
-		case <-s.ctx.Done():
+		case <-ctx.Done():
 			return
 		default:
 		}
 
 		err := func() error {
 			s.ready.Store(false)
-			sCtx, sCancel := context.WithCancel(s.ctx)
+			sCtx, sCancel := context.WithCancel(ctx)
 			defer sCancel()
 
 			if s.getCreds == nil {
@@ -182,70 +388,25 @@ func (s *stream) run(link string, peer *net.UDPAddr, udp bool, okchan chan<- str
 				turnLog("[STREAM %d] Using custom TURN port: %s", s.id, addr)
 			}
 
-			turnLog("[STREAM %d] Dialing TURN server %s...", s.id, addr)
-			// addr is already resolved during credential fetch via cascading DNS, so use DialContext without Resolver
-			dialer := &net.Dialer{
-				Timeout: 30 * time.Second,
-				Control: protectControl,
-			}
-			var turnConn net.PacketConn
-			if udp {
-				c, err := dialer.DialContext(sCtx, "udp", addr)
-				if err != nil {
-					return fmt.Errorf("TURN UDP dial failed: %w", err)
-				}
-				defer c.Close()
-				turnConn = &connectedUDPConn{c.(*net.UDPConn)}
-			} else {
-				c, err := dialer.DialContext(sCtx, "tcp", addr)
-				if err != nil {
-					return fmt.Errorf("TURN TCP dial failed: %w", err)
-				}
-				defer c.Close()
-				turnConn = turn.NewSTUNConn(c)
+			if !preferUDP {
+				return s.runTurnTransport(sCtx, addr, user, pass, lease, peer, okchan, peerType, false)
 			}
 
-			client, err := turn.NewClient(&turn.ClientConfig{
-				STUNServerAddr: addr, TURNServerAddr: addr, Username: user, Password: pass,
-				Conn: turnConn, LoggerFactory: logging.NewDefaultLoggerFactory(),
-			})
-			if err != nil {
-				return fmt.Errorf("TURN client creation failed: %w", err)
+			udpErr := s.runTurnTransport(sCtx, addr, user, pass, lease, peer, okchan, peerType, true)
+			if udpErr != nil {
+				turnUDPFailureCount.Add(1)
 			}
-			defer client.Close()
-			if err := client.Listen(); err != nil {
-				// Check if this is an authentication error (stale credentials)
-				if isAuthError(err) {
-					lease.recordAuthError()
-				}
-				return fmt.Errorf("TURN listen failed: %w", err)
+			if !shouldFallbackFromUDP(sCtx, udpErr) {
+				return udpErr
 			}
 
-			turnLog("[STREAM %d] Requesting TURN allocation...", s.id)
-			relayConn, err := client.Allocate()
-			if err != nil {
-				// Check if this is an authentication error (stale credentials)
-				if isAuthError(err) {
-					lease.recordAuthError()
-				}
-				if isAllocationQuotaError(err) {
-					turnQuotaErrors.Add(1)
-					cooldown := lease.markSaturated()
-					turnLog("[STREAM %d] TURN allocation quota reached; credential slot %d cooling down for %v", s.id, lease.slot, cooldown)
-				}
-				return fmt.Errorf("TURN allocation failed: %w", err)
-			}
-			defer relayConn.Close()
-
-			turnLog("[STREAM %d] Allocated relay address: %s", s.id, relayConn.LocalAddr())
-
-			// Delegate to mode-specific handler
-			if peerType == "wireguard" {
-				return s.runNoDTLS(sCtx, relayConn, peer, okchan)
-			}
-			// proxy_v2 and proxy_v1 both use DTLS, but v2 sends session+stream handshake
-			sendHandshake := peerType != "proxy_v1"
-			return s.runDTLS(sCtx, relayConn, peer, okchan, sendHandshake)
+			// Do not let the scheduler enqueue packets into an allocation that has
+			// already failed while its TCP replacement is being established.
+			s.ready.Store(false)
+			s.readySince.Store(0)
+			turnTCPFallbackCount.Add(1)
+			turnLog("[STREAM %d] TURN/UDP unavailable (%v); falling back to TURN/TCP", s.id, udpErr)
+			return s.runTurnTransport(sCtx, addr, user, pass, lease, peer, okchan, peerType, false)
 		}()
 		// Stop routing new packets to this stream as soon as its current
 		// allocation exits. Keeping it marked ready during reconnect backoff
@@ -253,7 +414,7 @@ func (s *stream) run(link string, peer *net.UDPAddr, udp bool, okchan chan<- str
 		s.ready.Store(false)
 		readySince := s.readySince.Swap(0)
 
-		if s.ctx.Err() == nil {
+		if ctx.Err() == nil {
 			if err == nil {
 				err = errors.New("TURN stream ended")
 			}
@@ -263,6 +424,7 @@ func (s *stream) run(link string, peer *net.UDPAddr, udp bool, okchan chan<- str
 				reconnectAttempt++
 			}
 			streamReconnects.Add(1)
+			s.noteErrorPenalty(100 * time.Millisecond)
 			reconnectDelay := reconnectBackoff(reconnectAttempt, s.id)
 			if errors.Is(err, errCaptchaWaitRequired) {
 				if remaining := captchaBackoff.remaining(); remaining > reconnectDelay {
@@ -274,7 +436,7 @@ func (s *stream) run(link string, peer *net.UDPAddr, udp bool, okchan chan<- str
 			}
 			turnLog("[STREAM %d] Error: %v. Reconnecting in %v...", s.id, err, reconnectDelay.Round(time.Second))
 			select {
-			case <-s.ctx.Done():
+			case <-ctx.Done():
 				return
 			case <-time.After(reconnectDelay):
 			}
@@ -301,44 +463,54 @@ func (s *stream) runNoDTLS(ctx context.Context, relayConn net.PacketConn, peer *
 			select {
 			case <-sCtx.Done():
 				return
-			case b := <-s.in:
-				n, err := relayConn.WriteTo(b, peer)
-				packetPool.Put(b[:cap(b)])
+			case item := <-s.in:
+				startedAt := time.Now().UnixNano()
+				if detailedTransportDiagnostics.Load() {
+					queueResidence.observeInterval(item.enqueuedAt, startedAt)
+				}
+				updateEWMA(&s.queueWaitEWMA, startedAt-item.enqueuedAt, 7, 1)
+				n, err := relayConn.WriteTo(item.buf, peer)
+				finishedAt := time.Now().UnixNano()
+				if detailedTransportDiagnostics.Load() {
+					socketWriteDelay.observeInterval(startedAt, finishedAt)
+				}
+				updateEWMA(&s.writeWaitEWMA, finishedAt-startedAt, 7, 1)
+				packetPool.Put(item.buf[:cap(item.buf)])
 
 				if err != nil {
 					noDtlsTxDropCount.Add(1)
+					s.noteErrorPenalty(250 * time.Millisecond)
 					turnLog("[STREAM %d] TX error: %v", s.id, err)
 					return
 				}
+				s.txPackets.Add(1)
 				s.txBytes.Add(uint64(n))
 			}
 		}
 	}()
 
+	peerString := peer.String()
+
 	// WireGuard server -> TURN -> WireGuard backend (s.out socket) (RX)
 	go func() {
 		defer wg.Done()
 		defer sCancel()
-		buf := make([]byte, iPacketBuffMaxSize)
 		for {
+			buf := packetPool.Get().([]byte)[:iPacketBuffMaxSize]
 			n, from, err := relayConn.ReadFrom(buf)
 			if err != nil {
+				packetPool.Put(buf[:cap(buf)])
 				noDtlsRxErrorCount.Add(1)
 				turnLog("[STREAM %d] RX error: %v", s.id, err)
 				return
 			}
-			if from.String() == peer.String() {
-				addr := s.peer.Load()
-				if addr == nil {
-					turnLog("[STREAM %d] RX: no peer address yet", s.id)
-					continue
+			if sameRelayPeer(from, peer, peerString) {
+				if s.enqueueReceived(sCtx, buf[:n]) {
+					s.rxPackets.Add(1)
+					s.rxBytes.Add(uint64(n))
 				}
-				if _, err := s.out.WriteTo(buf[:n], *addr); err != nil {
-					noDtlsRxErrorCount.Add(1)
-					turnLog("[STREAM %d] RX write error: %v", s.id, err)
-					return
-				}
-				s.rxBytes.Add(uint64(n))
+			} else {
+				packetPool.Put(buf[:cap(buf)])
 			}
 		}
 	}()
@@ -359,26 +531,15 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 	sCtx, sCancel := context.WithCancel(ctx)
 	defer sCancel()
 
-	var dtlsConn *dtls.Conn
-	var wrapTX, wrapRX *wrapConn
+	dtlsRelay, err := newDTLSRelayPacketConn(relayConn, peer, s.wrapKey, s)
+	if err != nil {
+		return err
+	}
 	if len(s.wrapKey) == wrapKeyLen {
-		var wrapErr error
-		wrapTX, wrapErr = newWrapConn(s.wrapKey, false)
-		if wrapErr != nil {
-			return fmt.Errorf("WRAP tx init failed: %w", wrapErr)
-		}
-		wrapRX, wrapErr = newWrapConn(s.wrapKey, false)
-		if wrapErr != nil {
-			return fmt.Errorf("WRAP rx init failed: %w", wrapErr)
-		}
 		turnLog("[STREAM %d] WRAP enabled", s.id)
 	}
 
-	c1, c2 := connutil.AsyncPacketPipe()
-	defer c1.Close()
-	defer c2.Close()
-
-	dtlsConn, err := dtls.Client(c1, peer, &dtls.Config{
+	dtlsConn, err := dtls.Client(dtlsRelay, peer, &dtls.Config{
 		Certificates: []tls.Certificate{*s.cert}, InsecureSkipVerify: true,
 		ExtendedMasterSecret:  dtls.RequireExtendedMasterSecret,
 		CipherSuites:          []dtls.CipherSuiteID{dtls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
@@ -389,100 +550,7 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 	}
 	defer dtlsConn.Close()
 
-	wg := sync.WaitGroup{}
-	wg.Add(3)
-
-	// Robust cleanup
-	context.AfterFunc(sCtx, func() {
-		relayConn.Close()
-		c1.Close() // Breaks dtlsConn
-	})
-
-	// DTLS <-> Relay (via Pipe) - MUST start before handshake
-	go func() {
-		defer wg.Done()
-		defer sCancel()
-		buf := make([]byte, iPacketBuffMaxSize)
-		for {
-			n, _, err := c2.ReadFrom(buf)
-			if err != nil {
-				return
-			}
-			out := buf[:n]
-			if wrapTX != nil {
-				wrapped := make([]byte, wrapMaxWire(n))
-				m, wrapErr := wrapTX.wrapInto(wrapped, out)
-				if wrapErr != nil {
-					relayTxErrorCount.Add(1)
-					turnLog("[STREAM %d] WRAP TX error: %v", s.id, wrapErr)
-					return
-				}
-				out = wrapped[:m]
-			}
-			if _, err := relayConn.WriteTo(out, peer); err != nil {
-				relayTxErrorCount.Add(1)
-				turnLog("[STREAM %d] Relay TX error: %v", s.id, err)
-				return
-			}
-		}
-	}()
-
-	go func() {
-		defer wg.Done()
-		defer sCancel()
-		readBufSize := iPacketBuffMaxSize
-		if wrapRX != nil {
-			readBufSize = wrapMaxWire(iPacketBuffMaxSize)
-		}
-		buf := make([]byte, readBufSize)
-		for {
-			n, from, err := relayConn.ReadFrom(buf)
-			if err != nil {
-				if isExpectedStreamShutdown(sCtx, err) {
-					return
-				}
-				relayRxErrorCount.Add(1)
-				turnLog("[STREAM %d] Relay RX error: %v", s.id, err)
-				return
-			}
-			if from.String() == peer.String() {
-				in := buf[:n]
-				if wrapRX != nil {
-					plain := make([]byte, iPacketBuffMaxSize)
-					m, wrapErr := wrapRX.unwrapPacket(in, plain)
-					if wrapErr != nil {
-						relayRxErrorCount.Add(1)
-						turnLog("[STREAM %d] WRAP RX error: %v", s.id, wrapErr)
-						continue
-					}
-					in = plain[:m]
-				}
-				if _, err := c2.WriteTo(in, peer); err != nil {
-					relayTxErrorCount.Add(1)
-					turnLog("[STREAM %d] Relay RX->Pipe error: %v", s.id, err)
-					return
-				}
-			}
-		}
-	}()
-
-	// Deadline updater
-	go func() {
-		defer wg.Done()
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-sCtx.Done():
-				return
-			case <-ticker.C:
-				deadline := time.Now().Add(30 * time.Second)
-				relayConn.SetDeadline(deadline)
-				dtlsConn.SetDeadline(deadline)
-				c2.SetDeadline(deadline)
-			}
-		}
-	}()
+	context.AfterFunc(sCtx, func() { _ = dtlsRelay.Close() })
 
 	// Set explicit deadline for handshake
 	turnLog("[STREAM %d] Starting DTLS handshake...", s.id)
@@ -497,13 +565,16 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 	dtlsConn.SetDeadline(time.Time{})
 	turnLog("[STREAM %d] DTLS handshake SUCCESS", s.id)
 
-	// Session ID + Stream ID Handshake (17 bytes total) — only for Proxy v2
+	// Session ID + Stream ID Handshake (17 bytes total) — only for Proxy v2.
+	// Bit 7 tells an updated server that this client can repair bounded
+	// downlink reordering. Legacy servers ignore this non-WireGuard datagram,
+	// and legacy clients keep sending the original unflagged stream ID.
 	var dtlsWriteMu sync.Mutex
 	if sendHandshake {
 		dtlsConn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		handshakeBuf := make([]byte, 17)
 		copy(handshakeBuf[:16], s.sessionID)
-		handshakeBuf[16] = byte(s.id)
+		handshakeBuf[16] = byte(s.id) | serverReorderCapability
 
 		if _, err := dtlsConn.Write(handshakeBuf); err != nil {
 			return fmt.Errorf("session ID handshake failed: %w", err)
@@ -524,7 +595,23 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 	lastRx.Store(time.Now().UnixNano())
 	var txSinceLastRx atomic.Int32
 
-	wg.Add(3)
+	wg := sync.WaitGroup{}
+	wg.Add(4)
+
+	// Keep inactive allocations bounded without an intermediate packet pipe.
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-sCtx.Done():
+				return
+			case <-ticker.C:
+				_ = dtlsConn.SetDeadline(time.Now().Add(30 * time.Second))
+			}
+		}
+	}()
 
 	// WireGuard -> DTLS (TX)
 	go func() {
@@ -534,13 +621,24 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 			select {
 			case <-sCtx.Done():
 				return
-			case b := <-s.in:
+			case item := <-s.in:
+				b := item.buf
+				startedAt := time.Now().UnixNano()
+				if detailedTransportDiagnostics.Load() {
+					queueResidence.observeInterval(item.enqueuedAt, startedAt)
+				}
+				updateEWMA(&s.queueWaitEWMA, startedAt-item.enqueuedAt, 7, 1)
 
 				// Do not recycle an idle stream on its first packet. Require several
 				// unanswered transmissions so normal low-traffic streams stay warm.
 				unansweredTx := txSinceLastRx.Add(1)
 				lastRxAt := time.Unix(0, lastRx.Load())
-				if s.watchdogTimeout > 0 && unansweredTx >= watchdogUnansweredTxLimit && time.Since(lastRxAt) > time.Duration(s.watchdogTimeout)*time.Second {
+				if shouldRecycleForMissingReplies(
+					serverProbeable.Load(),
+					unansweredTx,
+					time.Since(lastRxAt),
+					time.Duration(s.watchdogTimeout)*time.Second,
+				) {
 					packetPool.Put(b[:cap(b)])
 					dtlsTxDropCount.Add(1)
 					turnLog("[STREAM %d] Watchdog recycling stream after %d unanswered packets", s.id, unansweredTx)
@@ -554,9 +652,11 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 
 				if err != nil {
 					dtlsTxDropCount.Add(1)
+					s.noteErrorPenalty(250 * time.Millisecond)
 					turnLog("[STREAM %d] TX error: %v", s.id, err)
 					return
 				}
+				s.txPackets.Add(1)
 				s.txBytes.Add(uint64(n))
 			}
 		}
@@ -566,10 +666,11 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 	go func() {
 		defer wg.Done()
 		defer sCancel()
-		buf := make([]byte, iPacketBuffMaxSize)
 		for {
+			buf := packetPool.Get().([]byte)[:iPacketBuffMaxSize]
 			n, err := dtlsConn.Read(buf)
 			if err != nil {
+				packetPool.Put(buf[:cap(buf)])
 				if isExpectedStreamShutdown(sCtx, err) {
 					return
 				}
@@ -580,24 +681,23 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 			lastRx.Store(time.Now().UnixNano())
 			txSinceLastRx.Store(0)
 			if seq, ok := parseProbePacket(buf[:n]); ok {
+				packetPool.Put(buf[:cap(buf)])
 				receivedAt := time.Now()
 				s.lastPongAt.Store(receivedAt.UnixNano())
-				s.lastPongSeq.Store(seq)
+				updateAtomicMax(&s.lastPongSeq, seq)
 				probeRecvCount.Add(1)
 				serverProbeable.Store(true)
 				if seq == s.lastPingSeq.Load() {
 					if sentAt := s.lastPingAt.Load(); sentAt > 0 {
-						s.probeRTT.Store(receivedAt.Sub(time.Unix(0, sentAt)).Nanoseconds())
+						rtt := receivedAt.Sub(time.Unix(0, sentAt)).Nanoseconds()
+						updateEWMA(&s.probeRTT, rtt, 4, 1)
+						updateEWMA(&s.probeLoss, 0, 9, 1)
 					}
 				}
 				continue
 			}
-			if last := s.peer.Load(); last != nil {
-				if _, err := s.out.WriteTo(buf[:n], *last); err != nil {
-					dtlsRxErrorCount.Add(1)
-					turnLog("[STREAM %d] RX write error: %v", s.id, err)
-					return
-				}
+			if s.enqueueReceived(sCtx, buf[:n]) {
+				s.rxPackets.Add(1)
 				s.rxBytes.Add(uint64(n))
 			}
 		}
@@ -630,6 +730,9 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 			lastTick = now
 
 			seq := s.lastPingSeq.Add(1)
+			if serverProbeable.Load() && seq > 1 && s.lastPongSeq.Load() < seq-1 {
+				updateEWMA(&s.probeLoss, 1_000_000, 9, 1)
+			}
 			packet := makeProbePacket(seq)
 			s.lastPingAt.Store(now.UnixNano())
 			dtlsWriteMu.Lock()
@@ -667,6 +770,53 @@ func isExpectedStreamShutdown(ctx context.Context, err error) bool {
 	return ctx.Err() != nil || errors.Is(err, net.ErrClosed) || errors.Is(err, io.ErrClosedPipe)
 }
 
+func (s *stream) enqueueReceived(ctx context.Context, packet []byte) bool {
+	select {
+	case s.recv <- packet:
+		return true
+	case <-ctx.Done():
+		packetPool.Put(packet[:cap(packet)])
+		return false
+	default:
+		rxQueueFullDrop.Add(1)
+		packetPool.Put(packet[:cap(packet)])
+		return false
+	}
+}
+
+func (s *stream) noteErrorPenalty(penalty time.Duration) {
+	const maximum = int64(2 * time.Second)
+	for {
+		current := s.errorPenalty.Load()
+		next := current + int64(penalty)
+		if next > maximum {
+			next = maximum
+		}
+		if s.errorPenalty.CompareAndSwap(current, next) {
+			s.penaltyAt.Store(time.Now().UnixNano())
+			return
+		}
+	}
+}
+
+func (s *stream) decayedErrorPenalty(now time.Time) int64 {
+	penalty := s.errorPenalty.Load()
+	updatedAt := s.penaltyAt.Load()
+	if penalty <= 0 || updatedAt <= 0 {
+		return 0
+	}
+	// Every ten seconds halves the effect of a past error. The original value is
+	// retained for diagnostics; selection observes only the decayed value.
+	steps := int(now.Sub(time.Unix(0, updatedAt)) / (10 * time.Second))
+	if steps <= 0 {
+		return penalty
+	}
+	if steps >= 8 {
+		return 0
+	}
+	return penalty >> steps
+}
+
 func (s *stream) isHealthy(now time.Time) bool {
 	if !s.ready.Load() {
 		return false
@@ -678,11 +828,10 @@ func (s *stream) isHealthy(now time.Time) bool {
 	return lastPong > 0 && now.Sub(time.Unix(0, lastPong)) <= probeStaleThreshold
 }
 
-func (s *stream) healthScore() int64 {
-	// Queue residence dominates the score. Probe RTT only breaks ties between
-	// similarly-loaded streams and is capped so a transient spike cannot starve
-	// a still-healthy connection forever.
-	queueCost := int64(len(s.in)) * int64(50*time.Millisecond)
+func (s *stream) healthScore(now time.Time) int64 {
+	// Depth captures immediate pressure; the two EWMAs distinguish a harmless
+	// burst from a queue/socket that is actually delaying packets.
+	queueCost := int64(len(s.in))*int64(10*time.Millisecond) + s.queueWaitEWMA.Load() + s.writeWaitEWMA.Load()
 	rtt := s.probeRTT.Load()
 	if rtt <= 0 {
 		rtt = int64(50 * time.Millisecond)
@@ -690,11 +839,11 @@ func (s *stream) healthScore() int64 {
 	if rtt > int64(500*time.Millisecond) {
 		rtt = int64(500 * time.Millisecond)
 	}
-	// RTT buckets retain round-robin fairness between paths whose latency is
-	// effectively equivalent; a one-millisecond fluctuation must not funnel the
-	// entire tunnel through a single stream.
+	// RTT buckets and the scheduler's score band provide hysteresis: a transient
+	// one-millisecond movement cannot move all traffic to another allocation.
 	rttBucket := ((rtt + int64(25*time.Millisecond) - 1) / int64(25*time.Millisecond)) * int64(25*time.Millisecond)
-	return queueCost + rttBucket
+	lossCost := s.probeLoss.Load() * int64(500*time.Millisecond) / 1_000_000
+	return queueCost + rttBucket + lossCost + s.decayedErrorPenalty(now)
 }
 
 func updateAtomicMax(value *atomic.Uint64, candidate uint64) {
@@ -710,37 +859,57 @@ func resetTransportMetrics() {
 		&dtlsTxDropCount, &dtlsRxErrorCount, &relayTxErrorCount, &relayRxErrorCount,
 		&noDtlsTxDropCount, &noDtlsRxErrorCount, &queueFullDropCount, &noReadyDropCount,
 		&queuedPacketCount, &queuePeak, &streamReconnects, &turnQuotaErrors,
-		&probeSentCount, &probeRecvCount, &probeZombieCount,
+		&turnUDPAttemptCount, &turnUDPAllocationCount, &turnUDPFailureCount, &turnTCPFallbackCount,
+		&probeSentCount, &probeRecvCount, &probeZombieCount, &rxQueueFullDrop,
 	} {
 		counter.Store(0)
 	}
 	serverProbeable.Store(false)
+	queueResidence.reset()
+	socketWriteDelay.reset()
+	downlinkArrivalReorder.reset()
+	downlinkReorder.reset()
+	resetReorderBufferMetrics()
 }
 
 func logTransportMetrics(streams []*stream, pool *credentialPool, label string) {
+	if !detailedTransportDiagnostics.Load() {
+		return
+	}
 	ready, queueDepth := 0, 0
-	var txBytes, rxBytes uint64
+	var txPackets, rxPackets, txBytes, rxBytes uint64
 	for _, stream := range streams {
 		if stream.ready.Load() {
 			ready++
 		}
 		queueDepth += len(stream.in)
+		txPackets += stream.txPackets.Load()
+		rxPackets += stream.rxPackets.Load()
 		txBytes += stream.txBytes.Load()
 		rxBytes += stream.rxBytes.Load()
 	}
 	fresh, active, saturated, total := pool.snapshot()
-	turnLog("[METRICS] %s ready=%d/%d queue=%d peak=%d queued=%d drops(no-ready=%d full=%d tx=%d) bytes(tx=%d rx=%d) reconnects=%d quota486=%d probes=%d/%d zombies=%d probe-capable=%t creds(fresh=%d active=%d saturated=%d total=%d)",
+	waitSummary := queueResidence.summaryAndReset("queue-wait")
+	writeSummary := socketWriteDelay.summaryAndReset("socket-write")
+	now := time.Now()
+	arrivalSummary := downlinkArrivalReorder.summaryAndReset("wg-arrival", now)
+	reorderSummary := downlinkReorder.summaryAndReset("wg-order", now)
+	turnLog("[METRICS] %s ready=%d/%d queue=%d peak=%d queued=%d drops(no-ready=%d full=%d rx-full=%d tx=%d) packets(tx=%d rx=%d) bytes(tx=%d rx=%d) reconnects=%d quota486=%d turn-udp(attempts=%d allocations=%d failures=%d tcp-fallbacks=%d) probes=%d/%d zombies=%d probe-capable=%t creds(fresh=%d active=%d saturated=%d total=%d)%s%s%s%s%s",
 		label, ready, len(streams), queueDepth, queuePeak.Load(), queuedPacketCount.Load(),
-		noReadyDropCount.Load(), queueFullDropCount.Load(), dtlsTxDropCount.Load()+noDtlsTxDropCount.Load(),
-		txBytes, rxBytes, streamReconnects.Load(), turnQuotaErrors.Load(), probeRecvCount.Load(), probeSentCount.Load(),
-		probeZombieCount.Load(), serverProbeable.Load(), fresh, active, saturated, total)
+		noReadyDropCount.Load(), queueFullDropCount.Load(), rxQueueFullDrop.Load(), dtlsTxDropCount.Load()+noDtlsTxDropCount.Load(),
+		txPackets, rxPackets, txBytes, rxBytes, streamReconnects.Load(), turnQuotaErrors.Load(),
+		turnUDPAttemptCount.Load(), turnUDPAllocationCount.Load(), turnUDPFailureCount.Load(), turnTCPFallbackCount.Load(),
+		probeRecvCount.Load(), probeSentCount.Load(),
+		probeZombieCount.Load(), serverProbeable.Load(), fresh, active, saturated, total,
+		waitSummary, writeSummary, arrivalSummary, reorderSummary, reorderBufferMetrics())
 }
 
 var currentTurnCancel context.CancelFunc
+var currentTurnRuntime *turnRuntime
 var turnMutex sync.Mutex
 
 //export wgTurnProxyStart
-func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n C.int, udp C.int, listenAddrC *C.char, turnIpC *C.char, turnPortC C.int, peerTypeC *C.char, streamsPerCredC C.int, watchdogTimeoutC C.int, useWrapC C.int, wrapKeyHexC *C.char, captchaProfileJSONC *C.char, networkHandleC C.longlong) int32 {
+func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n C.int, udp C.int, listenAddrC *C.char, turnIpC *C.char, turnPortC C.int, peerTypeC *C.char, streamsPerCredC C.int, watchdogTimeoutC C.int, useWrapC C.int, wrapKeyHexC *C.char, captchaProfileJSONC *C.char, detailedDiagnosticsC C.int, networkHandleC C.longlong) int32 {
 	// Refresh process-local networking without treating an ordinary start as a
 	// physical path change. Only the explicit JNI notification marks active TURN
 	// credential slots as potentially quota-saturated.
@@ -769,13 +938,22 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n C.int
 		turnLog("[PROXY] StreamsPerCred adjusted from %d to %d to stay within the TURN allocation quota", requestedStreamsPerCred, streamsPerCredential)
 	}
 	watchdogTimeout := int(watchdogTimeoutC)
+	transportMode := int(udp)
+	if transportMode < turnTransportTCPOnly || transportMode > turnTransportUDPPreferred {
+		turnLog("[PROXY] Invalid TURN transport mode: %d", transportMode)
+		return -1
+	}
+	preferUDP := transportMode == turnTransportUDPPreferred
 	useWrap := int(useWrapC) != 0
 	wrapKeyHex := strings.TrimSpace(C.GoString(wrapKeyHexC))
 	setCaptchaProfileJSON(C.GoString(captchaProfileJSONC))
+	detailedTransportDiagnostics.Store(int(detailedDiagnosticsC) != 0)
 	networkHandle := int64(networkHandleC)
 	var wrapKey []byte
 	if useWrap {
-		if udp != 0 || peerType == "wireguard" {
+		// UDP-first can use WRAP because WRAP is applied at the DTLS relay
+		// boundary; raw WireGuard mode still has no DTLS layer to wrap.
+		if peerType == "wireguard" {
 			turnLog("[PROXY] WRAP requires DTLS proxy_v1/proxy_v2 mode")
 			return -1
 		}
@@ -788,13 +966,18 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n C.int
 		turnLog("[PROXY] WRAP mode enabled")
 	}
 
-	turnLog("[PROXY] Hub starting on %s (streams=%d, mode=%s, peerType=%s, streamsPerCred=%d, watchdogTimeout=%d, wrap=%t, networkHandle=%d)", listenAddr, int(n), mode, peerType, streamsPerCredential, watchdogTimeout, useWrap, networkHandle)
+	transportDescription := "TURN/TCP"
+	if preferUDP {
+		transportDescription = "TURN/UDP with TURN/TCP fallback"
+	}
+	turnLog("[PROXY] Hub starting on %s (streams=%d, mode=%s, peerType=%s, transport=%s, streamsPerCred=%d, watchdogTimeout=%d, wrap=%t, networkHandle=%d)", listenAddr, int(n), mode, peerType, transportDescription, streamsPerCredential, watchdogTimeout, useWrap, networkHandle)
 	turnMutex.Lock()
 	if currentTurnCancel != nil {
 		currentTurnCancel()
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	currentTurnCancel = cancel
+	currentTurnRuntime = nil
 	turnMutex.Unlock()
 
 	// Resolve peerAddr via cascading DNS (if it's a domain)
@@ -862,10 +1045,6 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n C.int
 	}
 	context.AfterFunc(ctx, func() { lc.Close() })
 
-	// Generate fresh Session ID for every run to avoid server-side conflicts
-	sessionID, _ := uuid.New().MarshalBinary()
-	turnLog("[PROXY] Session ID generated: %x", sessionID)
-
 	// Generate DTLS certificate once for all streams to save CPU
 	cert, err := selfsign.GenerateSelfSigned()
 	if err != nil {
@@ -873,25 +1052,37 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n C.int
 		return -1
 	}
 
-	ok := make(chan struct{}, int(n))
-	streams := make([]*stream, int(n))
 	resetTransportMetrics()
-	for i := 0; i < int(n); i++ {
-		streams[i] = &stream{ctx: ctx, id: i, in: make(chan []byte, 512), out: lc, sessionID: sessionID, cert: &cert, watchdogTimeout: watchdogTimeout, wrapKey: wrapKey, getCreds: getCreds}
+	runtime := &turnRuntime{
+		ctx:  ctx,
+		recv: make(chan []byte, 1024),
+		lc:   lc,
+		config: transportRuntimeConfig{
+			maxStreams:     int(n),
+			link:           link,
+			peer:           peer,
+			preferUDP:      preferUDP,
+			turnIP:         turnIp,
+			turnPort:       turnPort,
+			peerType:       peerType,
+			watchdog:       watchdogTimeout,
+			wrapKey:        wrapKey,
+			certificate:    &cert,
+			getCreds:       getCreds,
+			credentialPool: credPool,
+		},
 	}
-	for i := range streams {
-		stream := streams[i]
-		go func(delay time.Duration) {
-			timer := time.NewTimer(delay)
-			defer timer.Stop()
-			select {
-			case <-ctx.Done():
-				return
-			case <-timer.C:
-				stream.run(link, peer, udp != 0, ok, turnIp, turnPort, peerType)
-			}
-		}(time.Duration(i) * 200 * time.Millisecond)
+	generation, err := runtime.newGeneration(networkHandle)
+	if err != nil {
+		cancel()
+		turnLog("[PROXY] Failed to create stream generation: %v", err)
+		return -1
 	}
+	runtime.active.Store(generation)
+	generation.pool.enableScaling()
+	turnMutex.Lock()
+	currentTurnRuntime = runtime
+	turnMutex.Unlock()
 
 	// Readiness changes independently from local WireGuard traffic. Monitor it
 	// separately so diagnostics reflect the actual balancing pool even while
@@ -901,33 +1092,112 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n C.int
 		metricsTicker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 		defer metricsTicker.Stop()
-		lastReady := -1
+		lastReady, lastActive := -1, -1
 		for {
+			generation := runtime.active.Load()
+			if generation == nil {
+				return
+			}
 			ready := 0
-			for _, s := range streams {
+			for _, s := range generation.streams {
 				if s.ready.Load() {
 					ready++
 				}
 			}
-			if ready != lastReady {
-				turnLog("[PROXY] Active balancing pool: %d/%d streams ready", ready, len(streams))
+			active := generation.pool.activeCount()
+			if ready != lastReady || active != lastActive {
+				turnLog("[PROXY] Active balancing pool: %d/%d streams ready (configured max=%d, network=%d)", ready, active, len(generation.streams), generation.networkHandle)
 				lastReady = ready
+				lastActive = active
 			}
 			select {
 			case <-ctx.Done():
-				logTransportMetrics(streams, credPool, "final")
+				logTransportMetrics(generation.streams, credPool, "final")
 				return
 			case <-ticker.C:
 			case <-metricsTicker.C:
-				logTransportMetrics(streams, credPool, "periodic")
+				logTransportMetrics(generation.streams, credPool, "periodic")
+			}
+		}
+	}()
+
+	// All TURN receive paths merge here. Measuring and writing at this single
+	// consumer records the exact order delivered to WireGuard.
+	go func() {
+		reorderer := newWGPacketReorderer()
+		release := func(packet []byte) { packetPool.Put(packet[:cap(packet)]) }
+		deliver := func(packet []byte) {
+			if detailedTransportDiagnostics.Load() {
+				downlinkReorder.observe(packet, time.Now())
+			}
+			addr := runtime.returnPeer.Load()
+			if addr != nil {
+				if _, writeErr := lc.WriteTo(packet, *addr); writeErr != nil && ctx.Err() == nil {
+					dtlsRxErrorCount.Add(1)
+					turnLog("[PROXY] WireGuard RX write error: %v", writeErr)
+				}
+			}
+			release(packet)
+		}
+		timer := time.NewTimer(time.Hour)
+		if !timer.Stop() {
+			<-timer.C
+		}
+		defer timer.Stop()
+		defer reorderer.close(release)
+		var scheduled time.Time
+		updateTimer := func() <-chan time.Time {
+			deadline, ok := reorderer.nextDeadline()
+			if !ok {
+				if !scheduled.IsZero() && !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				scheduled = time.Time{}
+				return nil
+			}
+			if scheduled.Equal(deadline) {
+				return timer.C
+			}
+			if !scheduled.IsZero() && !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			delay := time.Until(deadline)
+			if delay < 0 {
+				delay = 0
+			}
+			timer.Reset(delay)
+			scheduled = deadline
+			return timer.C
+		}
+		for {
+			timerC := updateTimer()
+			select {
+			case <-ctx.Done():
+				return
+			case packet := <-runtime.recv:
+				now := time.Now()
+				if detailedTransportDiagnostics.Load() {
+					downlinkArrivalReorder.observe(packet, now)
+				}
+				reorderer.process(packet, now, deliver, release)
+			case <-timerC:
+				scheduled = time.Time{}
+				reorderer.flushExpired(time.Now(), deliver)
 			}
 		}
 	}()
 
 	go func() {
-		nStreams := int(len(streams))
-		readyStreams := make([]*stream, 0, nStreams)
+		readyStreams := make([]*stream, 0, int(n))
 		var nextStream uint64
+		stripeSelector := newPacketStripeSelector(packetStripeSize)
+		turnLog("[PROXY] Packet striping width: %d", packetStripeSize)
 
 		for {
 			b := packetPool.Get().([]byte)[:iPacketBuffMaxSize]
@@ -942,7 +1212,13 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n C.int
 			// subset is ready (the next ready slot receives several turns).
 			readyStreams = readyStreams[:0]
 			now := time.Now()
-			for _, candidate := range streams {
+			generation := runtime.active.Load()
+			if generation == nil {
+				noReadyDropCount.Add(1)
+				packetPool.Put(b[:cap(b)])
+				continue
+			}
+			for _, candidate := range generation.streams {
 				if candidate.isHealthy(now) {
 					readyStreams = append(readyStreams, candidate)
 				}
@@ -953,15 +1229,13 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n C.int
 				packetPool.Put(b[:cap(b)])
 				continue
 			}
-			s, _ := nextLowestScore(readyStreams, &nextStream, func(candidate *stream) int64 {
-				return candidate.healthScore()
-			})
+			s, _ := stripeSelector.next(readyStreams, &nextStream, now)
 
 			returnAddr := addr
-			s.peer.Store(&returnAddr)
+			runtime.returnPeer.Store(&returnAddr)
 
 			select {
-			case s.in <- b[:nRead]:
+			case s.in <- queuedPacket{buf: b[:nRead], enqueuedAt: time.Now().UnixNano()}:
 				queuedPacketCount.Add(1)
 				updateAtomicMax(&queuePeak, uint64(len(s.in)))
 			default:
@@ -972,13 +1246,39 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n C.int
 	}()
 
 	select {
-	case <-ok:
+	case <-generation.ready:
 		turnLog("[PROXY] First stream is ready, tunnel can start")
 		return 0
 	case <-ctx.Done():
 		turnLog("[PROXY] PROXY startup cancelled")
 		return -1
 	}
+}
+
+//export wgTurnProxyHandover
+func wgTurnProxyHandover(networkHandleC C.longlong) int32 {
+	networkHandle := int64(networkHandleC)
+	if networkHandle == 0 {
+		turnLog("[NETWORK] Refusing handover without a physical network handle")
+		return -1
+	}
+	if dnsStr := C.getNetworkDnsServers(networkHandleC); dnsStr != nil {
+		dnsGo := C.GoString(dnsStr)
+		C.free(unsafe.Pointer(dnsStr))
+		InitSystemDns(strings.Split(dnsGo, ","))
+	}
+	turnMutex.Lock()
+	runtime := currentTurnRuntime
+	turnMutex.Unlock()
+	if runtime == nil {
+		turnLog("[NETWORK] Handover requested without an active TURN runtime")
+		return -1
+	}
+	if err := runtime.handover(networkHandle); err != nil {
+		turnLog("[NETWORK] Make-before-break handover failed: %v", err)
+		return -1
+	}
+	return 0
 }
 
 //export wgTurnProxyStop
@@ -989,6 +1289,7 @@ func wgTurnProxyStop() {
 		turnLog("[PROXY] Stopping TURN proxy")
 		currentTurnCancel()
 		currentTurnCancel = nil
+		currentTurnRuntime = nil
 	}
 }
 

@@ -53,3 +53,24 @@ func TestReconnectBackoffIsBoundedAndStaggered(t *testing.T) {
 		t.Fatalf("bounded backoff=%v, want [30s,31s)", got)
 	}
 }
+
+func TestNextWithinScoreBandUsesHysteresisAndRotation(t *testing.T) {
+	type item struct {
+		id    int
+		score int64
+	}
+	items := []item{{1, 100}, {2, 108}, {3, 160}}
+	var cursor uint64
+	first, ok := nextWithinScoreBand(items, &cursor, 10, func(value item) int64 { return value.score })
+	if !ok || first.id != 1 {
+		t.Fatalf("first selection = %+v, %t", first, ok)
+	}
+	second, ok := nextWithinScoreBand(items, &cursor, 10, func(value item) int64 { return value.score })
+	if !ok || second.id != 2 {
+		t.Fatalf("second selection = %+v, %t", second, ok)
+	}
+	third, ok := nextWithinScoreBand(items, &cursor, 10, func(value item) int64 { return value.score })
+	if !ok || third.id != 1 {
+		t.Fatalf("third selection = %+v, %t", third, ok)
+	}
+}

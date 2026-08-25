@@ -11,8 +11,11 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.Build
 import android.util.Log
+import com.wireguard.android.Application
 import com.wireguard.android.backend.TurnBackend
 import com.wireguard.android.util.CaptchaBrowserProfile
+import com.wireguard.android.util.DetailedDiagnostics
+import com.wireguard.android.util.OptionalTurnUdp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -81,9 +84,33 @@ class TurnProxyManager(private val context: Context) {
             return
         }
 
-        // 3. Real change confirmed
-        Log.d(TAG, "Network change confirmed: $network. Restarting TURN.")
+        // 3. Real change confirmed. Keep the established pool alive until the
+        // native layer has at least two streams ready on the new physical path.
+        val oldNetwork = lastKnownNetwork
+        val networkHandle = network.getNetworkHandle()
+        Log.d(TAG, "Network change confirmed: $oldNetwork -> $network. Preparing make-before-break handover.")
+        val handoverResult = withContext(Dispatchers.IO) {
+            operationMutex.lock()
+            try {
+                if (userInitiatedStop || activeTunnelName == null) {
+                    TurnBackend.WG_TURN_PROXY_ERROR_GENERIC
+                } else {
+                    TurnBackend.wgTurnProxyHandover(networkHandle)
+                }
+            } finally {
+                operationMutex.unlock()
+            }
+        }
         lastKnownNetwork = network
+        if (handoverResult == TurnBackend.WG_TURN_PROXY_SUCCESS) {
+            Log.d(TAG, "TURN make-before-break handover completed on $network")
+            return
+        }
+
+        // A disappeared old network or a credential/captcha timeout can make
+        // overlap impossible. Preserve the previous restart path as a bounded
+        // fallback instead of leaving the tunnel on a dead socket generation.
+        Log.w(TAG, "Native handover failed ($handoverResult); falling back to a full TURN restart")
         performRestartSequence()
     }
 
@@ -219,11 +246,24 @@ class TurnProxyManager(private val context: Context) {
 
                 val networkHandle = lastKnownNetwork?.getNetworkHandle() ?: 0L
                 val networkType = getNetworkTypeString(lastKnownNetwork)
+                val preferences = Application.getPreferencesDataStore()
+                val detailedDiagnostics = DetailedDiagnostics.isEnabled(preferences)
+                val optionalTurnUdp = OptionalTurnUdp.isEnabled(preferences)
+                // Keep accepting the established per-profile UseUDP flag, but
+                // give it the same safe semantics as the global opt-in: UDP is
+                // preferred and TCP remains an automatic fallback.
+                val turnTransportMode = if (optionalTurnUdp || settings.useUdp) {
+                    TURN_TRANSPORT_UDP_WITH_TCP_FALLBACK
+                } else {
+                    TURN_TRANSPORT_TCP_ONLY
+                }
                 Log.d(TAG, "Starting TURN proxy for $tunnelName with network: $lastKnownNetwork (type=$networkType, handle=$networkHandle)")
+                Log.d(TAG, "Detailed TURN diagnostics: ${if (detailedDiagnostics) "enabled" else "disabled"}")
+                Log.d(TAG, "TURN transport: ${describeTransportMode(turnTransportMode)}")
 
                 val ret = TurnBackend.wgTurnProxyStart(
                     settings.peer, settings.vkLink, settings.mode, settings.streams,
-                    if (settings.useUdp) 1 else 0,
+                    turnTransportMode,
                     "127.0.0.1:${settings.localPort}",
                     settings.turnIp,
                     settings.turnPort,
@@ -233,6 +273,7 @@ class TurnProxyManager(private val context: Context) {
                     if (settings.useWrap) 1 else 0,
                     settings.wrapKeyHex,
                     CaptchaBrowserProfile.get(context).toJson(),
+                    if (detailedDiagnostics) 1 else 0,
                     networkHandle
                 )
 
@@ -326,6 +367,14 @@ class TurnProxyManager(private val context: Context) {
     }
 
     companion object {
+        private const val TURN_TRANSPORT_TCP_ONLY = 0
+        private const val TURN_TRANSPORT_UDP_WITH_TCP_FALLBACK = 1
+
+        private fun describeTransportMode(mode: Int): String = when (mode) {
+            TURN_TRANSPORT_UDP_WITH_TCP_FALLBACK -> "UDP preferred with TCP fallback"
+            else -> "TCP only"
+        }
+
         private const val TAG = "WireGuard/TurnProxyManager"
         private const val MAX_LOG_CHARS = 128 * 1024
         private const val ERROR_VPN_SERVICE_NOT_READY = -1001

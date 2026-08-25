@@ -40,6 +40,22 @@
         android:singleLineTitle="false"
         android:summary="@string/log_viewer_pref_summary"
         android:title="@string/log_viewer_pref_title" />
+    <CheckBoxPreference
+        android:defaultValue="false"
+        android:key="detailed_diagnostics"
+        android:layout="@layout/rabbit_preference"
+        android:singleLineTitle="false"
+        android:summaryOff="@string/detailed_diagnostics_summary_off"
+        android:summaryOn="@string/detailed_diagnostics_summary_on"
+        android:title="@string/detailed_diagnostics_title" />
+    <CheckBoxPreference
+        android:defaultValue="false"
+        android:key="optional_turn_udp"
+        android:layout="@layout/rabbit_preference"
+        android:singleLineTitle="false"
+        android:summaryOff="@string/optional_turn_udp_summary_off"
+        android:summaryOn="@string/optional_turn_udp_summary_on"
+        android:title="@string/optional_turn_udp_title" />
     <com.wireguard.android.preference.QuickTilePreference
         android:key="quick_tile"
         android:layout="@layout/rabbit_preference"

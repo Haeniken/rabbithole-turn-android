@@ -229,6 +229,13 @@
     <string name="log_saver_activity_label">Сохранить журнал</string>
     <string name="log_viewer_pref_summary">Журналы могут помочь при отладке</string>
     <string name="log_viewer_pref_title">Просмотр журналов приложения</string>
+    <string name="detailed_diagnostics_title">Детальная диагностика</string>
+    <string name="detailed_diagnostics_summary_off">Расширенные транспортные метрики отключены</string>
+    <string name="detailed_diagnostics_summary_on">Записывать очереди, сокеты и перестановку пакетов TURN</string>
+    <string name="optional_turn_udp_title">Опциональный TURN/UDP</string>
+    <string name="optional_turn_udp_summary_off">Использовать стабильный транспорт TURN/TCP</string>
+    <string name="optional_turn_udp_summary_on">Сначала пробовать TURN/UDP и автоматически возвращаться к TURN/TCP</string>
+    <string name="turn_use_udp">Предпочитать UDP (с возвратом на TCP)</string>
     <string name="log_viewer_title">Журналы</string>
     <string name="log_overview_title">Диагностика приложения</string>
     <string name="log_live_status">● Обновляется в реальном времени</string>

@@ -149,7 +149,8 @@ public final class TurnBackend {
      * @param vklink VK call link
      * @param mode TURN mode
      * @param n Number of streams
-     * @param useUdp Whether UDP is enabled
+     * @param useUdp TURN transport mode: 0 for TCP, 1 for UDP with automatic
+     *               TCP fallback
      * @param listenAddr Local listen address
      * @param turnIp TURN server IP
      * @param turnPort TURN server port
@@ -159,6 +160,7 @@ public final class TurnBackend {
      * @param useWrap Whether WRAP obfuscation is enabled
      * @param wrapKeyHex 32-byte WRAP key encoded as 64 hex characters
      * @param captchaProfileJson Browser identity shared with the CAPTCHA WebView
+     * @param detailedDiagnostics Whether extended transport diagnostics are enabled
      * @param networkHandle Android network handle for socket binding
      * @return 0 on success, -1 on generic failure, -9000 when VK reports that the call link expired
      */
@@ -177,9 +179,11 @@ public final class TurnBackend {
             int useWrap,
             String wrapKeyHex,
             String captchaProfileJson,
+            int detailedDiagnostics,
             long networkHandle
     );
     public static native void wgTurnProxyStop();
+    public static native int wgTurnProxyHandover(long networkHandle);
     public static native void wgNotifyNetworkChange();
     public static native String wgGetNetworkDnsServers(long networkHandle);
 
