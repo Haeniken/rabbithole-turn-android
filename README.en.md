@@ -29,8 +29,7 @@ The project is developed as a separate application with package name `com.rabbit
   the WireGuard packet format;
 - make-before-break handover between Wi-Fi and cellular networks;
 - `proxy_v2`, `proxy_v1`, and direct TURN relay transport modes;
-- optional TURN/UDP with automatic TURN/TCP fallback; compatible TURN/TCP remains
-  the default;
+- TURN/UDP enabled by default with automatic fallback to compatible TURN/TCP;
 - optional WRAP payload protection;
 - TURN credential acquisition from a call link;
 - automatic CAPTCHA handling with a persistent browser profile and a system

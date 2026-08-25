@@ -49,7 +49,7 @@
         android:summaryOn="@string/detailed_diagnostics_summary_on"
         android:title="@string/detailed_diagnostics_title" />
     <CheckBoxPreference
-        android:defaultValue="false"
+        android:defaultValue="true"
         android:key="optional_turn_udp"
         android:layout="@layout/rabbit_preference"
         android:singleLineTitle="false"
