@@ -356,6 +356,7 @@
                             android:layout_margin="4dp"
                             android:hint="@string/turn_peer_address"
                             android:enabled="@{config.turn.enabled}"
+                            app:endIconMode="password_toggle"
                             app:expandedHintEnabled="false"
                             app:layout_constraintStart_toStartOf="parent"
                             app:layout_constraintTop_toBottomOf="@id/turn_peer_type_layout"
@@ -367,7 +368,7 @@
                                 android:layout_height="wrap_content"
                                 android:enabled="@{config.turn.enabled}"
                                 android:imeOptions="actionNext"
-                                android:inputType="textNoSuggestions|textVisiblePassword"
+                                android:inputType="textNoSuggestions|textPassword"
                                 android:hint="@string/turn_peer_hint"
                                 android:text="@={config.turn.peer}" />
                         </com.google.android.material.textfield.TextInputLayout>
@@ -386,36 +387,15 @@
                             app:layout_constraintTop_toBottomOf="@id/turn_peer_layout" />
 
                         <com.google.android.material.textfield.TextInputLayout
-                            android:id="@+id/turn_mode_layout"
-                            style="@style/RabbitTextInput.ExposedDropdownMenu"
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_margin="4dp"
-                            android:hint="@string/turn_mode"
-                            android:enabled="@{config.turn.enabled}"
-                            app:layout_constraintEnd_toEndOf="parent"
-                            app:layout_constraintStart_toStartOf="parent"
-                            app:layout_constraintTop_toBottomOf="@id/turn_server_section_title">
-
-                            <AutoCompleteTextView
-                                android:id="@+id/turn_mode_spinner"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:inputType="none"
-                                android:enabled="@{config.turn.enabled}" />
-                        </com.google.android.material.textfield.TextInputLayout>
-
-                        <com.google.android.material.textfield.TextInputLayout
                             android:id="@+id/turn_vk_link_layout"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_margin="4dp"
                             android:hint="@string/turn_vk_link"
                             android:enabled="@{config.turn.enabled}"
-                            android:visibility="@{config.turn.mode.equals(`vk_link`) ? android.view.View.VISIBLE : android.view.View.GONE}"
                             app:expandedHintEnabled="false"
                             app:layout_constraintStart_toStartOf="parent"
-                            app:layout_constraintTop_toBottomOf="@id/turn_mode_layout"
+                            app:layout_constraintTop_toBottomOf="@id/turn_server_section_title"
                             app:layout_constraintEnd_toEndOf="parent">
 
                             <com.google.android.material.textfield.TextInputEditText

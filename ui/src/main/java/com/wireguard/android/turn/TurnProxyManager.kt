@@ -8,8 +8,6 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import android.net.NetworkRequest
-import android.os.Build
 import android.util.Log
 import com.wireguard.android.Application
 import com.wireguard.android.backend.TurnBackend
@@ -18,7 +16,6 @@ import com.wireguard.android.util.DetailedDiagnostics
 import com.wireguard.android.util.OptionalTurnUdp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -26,7 +23,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.flow.collectLatest
-import java.net.Inet4Address
 
 /**
  * Lightweight manager for per-tunnel TURN client processes and logs.
@@ -34,7 +30,10 @@ import java.net.Inet4Address
  * Uses PhysicalNetworkMonitor to track stable internet connections and 
  * triggers restarts when the underlying network or IP changes.
  */
-class TurnProxyManager(private val context: Context) {
+class TurnProxyManager(
+    private val context: Context,
+    private val connectionStateMachine: ConnectionStateMachine,
+) {
     private val scope = CoroutineScope(Dispatchers.IO)
 
     sealed interface TurnStartResult {
@@ -44,7 +43,7 @@ class TurnProxyManager(private val context: Context) {
     }
     
     // State
-    private var activeTunnelName: String? = null
+    @Volatile private var activeSession: ConnectionStateMachine.Session? = null
     private var activeSettings: TurnSettings? = null
     @Volatile private var userInitiatedStop: Boolean = false
     
@@ -69,7 +68,8 @@ class TurnProxyManager(private val context: Context) {
      * The monitor already provides debounced stable networks.
      */
     private suspend fun handleNetworkChange(network: Network) {
-        if (userInitiatedStop || activeTunnelName == null) return
+        val session = activeSession ?: return
+        if (userInitiatedStop || !connectionStateMachine.isCurrent(session)) return
 
         // 1. Initial baseline setting
         if (lastKnownNetwork == null) {
@@ -89,10 +89,11 @@ class TurnProxyManager(private val context: Context) {
         val oldNetwork = lastKnownNetwork
         val networkHandle = network.getNetworkHandle()
         Log.d(TAG, "Network change confirmed: $oldNetwork -> $network. Preparing make-before-break handover.")
+        connectionStateMachine.transition(session, ConnectionStateMachine.Phase.HANDING_OVER_NETWORK)
         val handoverResult = withContext(Dispatchers.IO) {
             operationMutex.lock()
             try {
-                if (userInitiatedStop || activeTunnelName == null) {
+                if (userInitiatedStop || activeSession != session || !connectionStateMachine.isCurrent(session)) {
                     TurnBackend.WG_TURN_PROXY_ERROR_GENERIC
                 } else {
                     TurnBackend.wgTurnProxyHandover(networkHandle)
@@ -104,6 +105,7 @@ class TurnProxyManager(private val context: Context) {
         lastKnownNetwork = network
         if (handoverResult == TurnBackend.WG_TURN_PROXY_SUCCESS) {
             Log.d(TAG, "TURN make-before-break handover completed on $network")
+            connectionStateMachine.transition(session, ConnectionStateMachine.Phase.CONNECTED)
             return
         }
 
@@ -111,11 +113,16 @@ class TurnProxyManager(private val context: Context) {
         // overlap impossible. Preserve the previous restart path as a bounded
         // fallback instead of leaving the tunnel on a dead socket generation.
         Log.w(TAG, "Native handover failed ($handoverResult); falling back to a full TURN restart")
-        performRestartSequence()
+        connectionStateMachine.transition(
+            session,
+            ConnectionStateMachine.Phase.DEGRADED,
+            "Network handover failed ($handoverResult)",
+        )
+        performRestartSequence(session)
     }
 
-    private suspend fun performRestartSequence() {
-        if (userInitiatedStop || activeTunnelName == null) return
+    private suspend fun performRestartSequence(session: ConnectionStateMachine.Session) {
+        if (userInitiatedStop || activeSession != session || !connectionStateMachine.isCurrent(session)) return
 
         Log.d(TAG, "Stopping TURN proxy for restart...")
         TurnBackend.wgTurnProxyStop()
@@ -126,17 +133,22 @@ class TurnProxyManager(private val context: Context) {
         
         delay(500) // Give Go minimal time to react
 
-        val name = activeTunnelName ?: return
         val settings = activeSettings ?: return
 
         var attempts = 0
-        while (currentCoroutineContext().isActive && !userInitiatedStop) {
+        while (
+            currentCoroutineContext().isActive &&
+            !userInitiatedStop &&
+            activeSession == session &&
+            connectionStateMachine.isCurrent(session)
+        ) {
             attempts++
-            Log.d(TAG, "Starting TURN for $name (Attempt $attempts)")
+            Log.d(TAG, "Starting TURN for ${session.tunnelName} (Attempt $attempts)")
             
-            when (val result = startForTunnelInternal(name, settings)) {
+            when (val result = startForTunnelInternal(session, settings)) {
                 TurnStartResult.Success -> {
                     Log.d(TAG, "TURN restarted successfully on attempt $attempts")
+                    connectionStateMachine.transition(session, ConnectionStateMachine.Phase.CONNECTED)
                     return // Exit loop on success
                 }
                 TurnStartResult.Cancelled -> {
@@ -172,11 +184,17 @@ class TurnProxyManager(private val context: Context) {
     /**
      * Called once VpnService is ready and TURN should gate WireGuard startup.
      */
-    suspend fun onTunnelEstablished(tunnelName: String, turnSettings: TurnSettings?): TurnStartResult {
-        Log.d(TAG, "onTunnelEstablished called for tunnel: $tunnelName")
+    suspend fun onTunnelEstablished(
+        session: ConnectionStateMachine.Session,
+        turnSettings: TurnSettings?,
+    ): TurnStartResult {
+        val tunnelName = session.tunnelName
+        Log.d(TAG, "onTunnelEstablished called for tunnel: $tunnelName generation=${session.generation}")
+
+        if (!connectionStateMachine.isCurrent(session)) return TurnStartResult.Cancelled
 
         // Reset state for new session
-        activeTunnelName = tunnelName
+        activeSession = session
         activeSettings = turnSettings
         userInitiatedStop = false
         
@@ -189,14 +207,15 @@ class TurnProxyManager(private val context: Context) {
             return TurnStartResult.Success
         }
 
-        val result = startForTunnelInternal(tunnelName, turnSettings)
+        val result = startForTunnelInternal(session, turnSettings)
 
         if (result == TurnStartResult.Success) {
             // After initial start, allow network changes to trigger restarts.
             // We delay slightly to ensure we don't catch the immediate network fluctuation caused by VPN itself.
             scope.launch {
                 delay(2000)
-                Log.d(TAG, "Initialization phase complete, network monitoring active")
+                if (activeSession == session && connectionStateMachine.isCurrent(session))
+                    Log.d(TAG, "Initialization phase complete, network monitoring active")
             }
         }
 
@@ -204,14 +223,24 @@ class TurnProxyManager(private val context: Context) {
     }
 
     suspend fun startForTunnel(tunnelName: String, settings: TurnSettings): TurnStartResult {
-        return startForTunnelInternal(tunnelName, settings)
+        val session = connectionStateMachine.begin(tunnelName)
+        return onTunnelEstablished(session, settings)
     }
     
-    private suspend fun startForTunnelInternal(tunnelName: String, settings: TurnSettings): TurnStartResult =
+    private suspend fun startForTunnelInternal(
+        session: ConnectionStateMachine.Session,
+        settings: TurnSettings,
+    ): TurnStartResult =
         withContext(Dispatchers.IO) {
+            val tunnelName = session.tunnelName
             operationMutex.lock()
             try {
-                if (!currentCoroutineContext().isActive) {
+                if (
+                    !currentCoroutineContext().isActive ||
+                    userInitiatedStop ||
+                    activeSession != session ||
+                    !connectionStateMachine.isCurrent(session)
+                ) {
                     Log.d(TAG, "startForTunnelInternal cancelled before execution")
                     return@withContext TurnStartResult.Cancelled
                 }
@@ -223,6 +252,8 @@ class TurnProxyManager(private val context: Context) {
                 TurnBackend.wgTurnProxyStop()
                 // Give Go runtime a moment to fully clean up goroutines
                 delay(200)
+                if (userInitiatedStop || activeSession != session || !connectionStateMachine.isCurrent(session))
+                    return@withContext TurnStartResult.Cancelled
 
                 // Wait for JNI to be registered
                 val jniReady = TurnBackend.waitForVpnServiceRegistered(2000)
@@ -260,9 +291,11 @@ class TurnProxyManager(private val context: Context) {
                 Log.d(TAG, "Starting TURN proxy for $tunnelName with network: $lastKnownNetwork (type=$networkType, handle=$networkHandle)")
                 Log.d(TAG, "Detailed TURN diagnostics: ${if (detailedDiagnostics) "enabled" else "disabled"}")
                 Log.d(TAG, "TURN transport: ${describeTransportMode(turnTransportMode)}")
+                connectionStateMachine.transition(session, ConnectionStateMachine.Phase.AUTHORIZING)
+                connectionStateMachine.transition(session, ConnectionStateMachine.Phase.CONNECTING_TRANSPORT)
 
                 val ret = TurnBackend.wgTurnProxyStart(
-                    settings.peer, settings.vkLink, settings.mode, settings.streams,
+                    settings.peer, settings.vkLink, "vk_link", settings.streams,
                     turnTransportMode,
                     "127.0.0.1:${settings.localPort}",
                     settings.turnIp,
@@ -278,12 +311,22 @@ class TurnProxyManager(private val context: Context) {
                 )
 
                 val listenAddr = "127.0.0.1:${settings.localPort}"
-                if (userInitiatedStop || !currentCoroutineContext().isActive) {
+                if (
+                    userInitiatedStop ||
+                    !currentCoroutineContext().isActive ||
+                    activeSession != session ||
+                    !connectionStateMachine.isCurrent(session)
+                ) {
                     instance.running = false
                     Log.d(TAG, "TURN startup cancelled for $tunnelName")
+                    // stopForTunnel() may have raced with the blocking native start and issued
+                    // its stop before the new native generation became visible. Stop once more
+                    // after start returns so a superseded generation cannot remain alive.
+                    TurnBackend.wgTurnProxyStop()
                     TurnStartResult.Cancelled
                 } else if (ret == TurnBackend.WG_TURN_PROXY_SUCCESS) {
                     instance.running = true
+                    connectionStateMachine.transition(session, ConnectionStateMachine.Phase.CONNECTING_TUNNEL)
                     val msg = "TURN started for tunnel \"$tunnelName\" listening on $listenAddr"
                     Log.d(TAG, msg)
                     appendLogLine(tunnelName, msg)
@@ -303,10 +346,17 @@ class TurnProxyManager(private val context: Context) {
             }
         }
 
-    suspend fun stopForTunnel(tunnelName: String) =
+    suspend fun stopForTunnel(
+        tunnelName: String,
+        expectedSession: ConnectionStateMachine.Session? = null,
+    ) =
         withContext(Dispatchers.IO) {
+            val session = activeSession
+            if (session?.tunnelName != tunnelName) return@withContext
+            if (expectedSession != null && session != expectedSession) return@withContext
+
             userInitiatedStop = true
-            activeTunnelName = null
+            activeSession = null
             activeSettings = null
             lastKnownNetwork = null
 
@@ -327,6 +377,16 @@ class TurnProxyManager(private val context: Context) {
 
     fun isRunning(tunnelName: String): Boolean {
         return instances[tunnelName]?.running == true
+    }
+
+    fun onVpnServiceTerminated(reason: String) {
+        val session = activeSession ?: connectionStateMachine.currentSession() ?: return
+        activeSession = null
+        activeSettings = null
+        lastKnownNetwork = null
+        instances[session.tunnelName]?.running = false
+        appendLogLine(session.tunnelName, "VpnService terminated unexpectedly: $reason")
+        connectionStateMachine.fail(session, "VpnService $reason")
     }
 
     fun getLog(tunnelName: String): String {

@@ -5,10 +5,17 @@
 
 package com.wireguard.android.backend;
 
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ServiceInfo;
 import android.net.IpPrefix;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.system.OsConstants;
 import android.util.Log;
@@ -35,6 +42,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import androidx.annotation.Nullable;
 import androidx.collection.ArraySet;
@@ -50,8 +58,11 @@ public final class GoBackend implements Backend {
     // addresses, DNS, app rules and device-specific parcel overhead.
     private static final int MAX_VPN_EXCLUDED_ROUTES = 7_500;
     private static final String TAG = "WireGuard/GoBackend";
-    @Nullable private static AlwaysOnCallback alwaysOnCallback;
+    private static final Object VPN_SERVICE_LOCK = new Object();
+    @Nullable private static volatile AlwaysOnCallback alwaysOnCallback;
+    @Nullable private static volatile VpnServiceLifecycleCallback vpnServiceLifecycleCallback;
     private static CompletableFuture<VpnService> vpnService = new CompletableFuture<>();
+    @Nullable private static volatile VpnService activeVpnService;
     private final Context context;
     @Nullable private Config currentConfig;
     @Nullable private Tunnel currentTunnel;
@@ -89,6 +100,11 @@ public final class GoBackend implements Backend {
         alwaysOnCallback = cb;
     }
 
+    /** Registers a process callback for unexpected VpnService termination. */
+    public static void setVpnServiceLifecycleCallback(@Nullable final VpnServiceLifecycleCallback cb) {
+        vpnServiceLifecycleCallback = cb;
+    }
+
     @Nullable private static native String wgGetConfig(int handle);
 
     private static native int wgGetSocketV4(int handle);
@@ -107,7 +123,7 @@ public final class GoBackend implements Backend {
      * @return A set of string values denoting names of running tunnels.
      */
     @Override
-    public Set<String> getRunningTunnelNames() {
+    public synchronized Set<String> getRunningTunnelNames() {
         if (currentTunnel != null) {
             final Set<String> runningTunnels = new ArraySet<>();
             runningTunnels.add(currentTunnel.getName());
@@ -123,7 +139,7 @@ public final class GoBackend implements Backend {
      * @return {@link State} associated with the given tunnel.
      */
     @Override
-    public State getState(final Tunnel tunnel) {
+    public synchronized State getState(final Tunnel tunnel) {
         return currentTunnel == tunnel ? State.UP : State.DOWN;
     }
 
@@ -134,7 +150,7 @@ public final class GoBackend implements Backend {
      * @return {@link Statistics} associated with the given tunnel.
      */
     @Override
-    public Statistics getStatistics(final Tunnel tunnel) {
+    public synchronized Statistics getStatistics(final Tunnel tunnel) {
         final Statistics stats = new Statistics();
         if (tunnel != currentTunnel || currentTunnelHandle == -1)
             return stats;
@@ -234,19 +250,31 @@ public final class GoBackend implements Backend {
         if (VpnService.prepare(context) != null)
             throw new BackendException(Reason.VPN_NOT_AUTHORIZED);
 
-        if (!vpnService.isDone()) {
-            Log.d(TAG, "Requesting to start VpnService");
-            context.startService(new Intent(context, VpnService.class));
+        final CompletableFuture<VpnService> serviceFuture;
+        synchronized (VPN_SERVICE_LOCK) {
+            if (activeVpnService != null && !activeVpnService.isShuttingDown()) {
+                serviceFuture = CompletableFuture.completedFuture(activeVpnService);
+            } else {
+                serviceFuture = vpnService;
+                Log.d(TAG, "Requesting to start foreground VpnService");
+                final Intent serviceIntent = new Intent(context, VpnService.class);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                    context.startForegroundService(serviceIntent);
+                else
+                    context.startService(serviceIntent);
+            }
         }
 
         final VpnService service;
         try {
-            service = vpnService.get(2, TimeUnit.SECONDS);
+            service = serviceFuture.get(3, TimeUnit.SECONDS);
         } catch (final TimeoutException e) {
             final Exception be = new BackendException(Reason.UNABLE_TO_START_VPN);
             be.initCause(e);
             throw be;
         }
+        if (service.isShuttingDown())
+            throw new BackendException(Reason.UNABLE_TO_START_VPN);
         service.setOwner(this);
         return service;
     }
@@ -255,18 +283,15 @@ public final class GoBackend implements Backend {
      * Stops {@link VpnService} when it was only prepared for TURN startup and no tunnel was
      * successfully activated.
      */
-    public void stopVpnServiceIfIdle() {
+    public synchronized void stopVpnServiceIfIdle() {
         if (currentTunnelHandle != -1)
             return;
-        try {
-            vpnService.get(0, TimeUnit.NANOSECONDS).stopSelf();
-        } catch (final TimeoutException ignored) {
-        } catch (final ExecutionException e) {
-            Log.w(TAG, "Unable to stop idle VpnService", e);
-        } catch (final InterruptedException e) {
-            Thread.currentThread().interrupt();
-            Log.w(TAG, "Interrupted while stopping idle VpnService", e);
+        final VpnService service;
+        synchronized (VPN_SERVICE_LOCK) {
+            service = activeVpnService;
         }
+        if (service != null)
+            service.requestStopIfIdle();
     }
 
     /**
@@ -280,7 +305,7 @@ public final class GoBackend implements Backend {
      * @throws Exception Exception raised while changing tunnel state.
      */
     @Override
-    public State setState(final Tunnel tunnel, State state, @Nullable final Config config) throws Exception {
+    public synchronized State setState(final Tunnel tunnel, State state, @Nullable final Config config) throws Exception {
         final State originalState = getState(tunnel);
 
         if (state == State.TOGGLE)
@@ -359,11 +384,19 @@ public final class GoBackend implements Backend {
                 }
             } else {
                 boolean addedAllowedApplication = false;
+                boolean applicationPackageAdded = false;
                 for (final String includedApplication : includedApplications) {
                     if (!globallyExcludedApplications.contains(includedApplication)) {
                         builder.addAllowedApplication(includedApplication);
                         addedAllowedApplication = true;
+                        applicationPackageAdded |= context.getPackageName().equals(includedApplication);
                     }
+                }
+                // The no-root tether proxy runs in this package. Its accepted downstream
+                // connections must enter the VPN even when a profile uses an app allow-list.
+                if (!applicationPackageAdded) {
+                    builder.addAllowedApplication(context.getPackageName());
+                    addedAllowedApplication = true;
                 }
                 // An empty allow-list means "all applications" to VpnService.Builder. Keep the
                 // tunnel restricted if the global exclusions removed every profile-specific app.
@@ -421,6 +454,14 @@ public final class GoBackend implements Backend {
                     builder.addRoute(addr.getAddress(), addr.getMask());
             }
 
+            // DNS must not inherit a broader excluded route. Re-adding these host routes after
+            // exclusions gives the resolver a deterministic path through the VPN and prevents a
+            // direct-DNS fallback when split routing is enabled.
+            if (sawDefaultRoute) {
+                for (final InetAddress dns : config.getInterface().getDnsServers())
+                    builder.addRoute(dns, dns.getAddress().length == 4 ? 32 : 128);
+            }
+
             // "Kill-switch" semantics
             if (!(sawDefaultRoute && config.getPeers().size() == 1)) {
                 builder.allowFamily(OsConstants.AF_INET);
@@ -460,12 +501,47 @@ public final class GoBackend implements Backend {
             currentTunnelHandle = -1;
             currentConfig = null;
             wgTurnOff(handleToClose);
-            try {
-                vpnService.get(0, TimeUnit.NANOSECONDS).stopSelf();
-            } catch (final TimeoutException ignored) { }
+            final VpnService service = activeVpnService;
+            if (service != null)
+                service.requestStopIfIdle();
         }
 
         tunnel.onStateChange(state);
+    }
+
+    private synchronized void handleVpnServiceTermination() {
+        final Tunnel tunnel = currentTunnel;
+        if (currentTunnelHandle != -1)
+            wgTurnOff(currentTunnelHandle);
+        currentTunnel = null;
+        currentTunnelHandle = -1;
+        currentConfig = null;
+        if (tunnel != null)
+            tunnel.onStateChange(State.DOWN);
+    }
+
+    private static void registerVpnService(final VpnService service) {
+        synchronized (VPN_SERVICE_LOCK) {
+            activeVpnService = service;
+            if (vpnService.isDone())
+                vpnService = new CompletableFuture<>();
+            vpnService.complete(service);
+        }
+    }
+
+    private static void unregisterVpnService(final VpnService service) {
+        synchronized (VPN_SERVICE_LOCK) {
+            if (activeVpnService != service)
+                return;
+            activeVpnService = null;
+            vpnService = new CompletableFuture<>();
+        }
+    }
+
+    private static boolean isActiveVpnService(final VpnService service) {
+        synchronized (VPN_SERVICE_LOCK) {
+            return activeVpnService == service;
+        }
     }
 
     /**
@@ -476,11 +552,21 @@ public final class GoBackend implements Backend {
         void alwaysOnTriggered();
     }
 
+    public interface VpnServiceLifecycleCallback {
+        void onUnexpectedTermination(String reason);
+    }
+
     /**
      * {@link android.net.VpnService} implementation for {@link GoBackend}
      */
     public static class VpnService extends android.net.VpnService {
+        private static final String NOTIFICATION_CHANNEL_ID = "rabbithole_tunnel";
+        private static final int NOTIFICATION_ID = 43021;
+        private static final long IDLE_STOP_DELAY_MS = 1_200L;
         @Nullable private GoBackend owner;
+        private final AtomicBoolean shuttingDown = new AtomicBoolean(false);
+        private final Handler mainHandler = new Handler(Looper.getMainLooper());
+        private final Runnable idleStop = this::stopIfStillIdle;
 
         public Builder getBuilder() {
             return new Builder();
@@ -488,58 +574,137 @@ public final class GoBackend implements Backend {
 
         @Override
         public void onCreate() {
+            super.onCreate();
             Log.d(TAG, "VpnService.onCreate() called");
+            startAsForeground();
             // CORRECT ORDER: First register in TurnBackend (JNI), then complete Future
             // This ensures JNI is ready before TurnProxyManager gets the Future
             Log.d(TAG, "Calling TurnBackend.onVpnServiceCreated()...");
             TurnBackend.onVpnServiceCreated(this);
             Log.d(TAG, "TurnBackend.onVpnServiceCreated() complete");
-
-            Log.d(TAG, "Calling vpnService.complete()...");
-            vpnService.complete(this);
-            Log.d(TAG, "vpnService.complete() complete");
-
-            super.onCreate();
+            registerVpnService(this);
         }
 
         @Override
         public void onDestroy() {
-            // Unregister from TurnBackend
-            TurnBackend.onVpnServiceCreated(null);
-            if (owner != null) {
-                final Tunnel tunnel = owner.currentTunnel;
-                if (tunnel != null) {
-                    if (owner.currentTunnelHandle != -1)
-                        wgTurnOff(owner.currentTunnelHandle);
-                    owner.currentTunnel = null;
-                    owner.currentTunnelHandle = -1;
-                    owner.currentConfig = null;
-                    tunnel.onStateChange(State.DOWN);
-                }
-            }
-            // Reset GoBackend future for next cycle
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-                vpnService = vpnService.newIncompleteFuture();
-            else
-                vpnService = new CompletableFuture<>();
+            mainHandler.removeCallbacks(idleStop);
+            shutdownOwner("destroyed");
+            TurnBackend.onVpnServiceDestroyed(this);
+            unregisterVpnService(this);
+            stopForeground(STOP_FOREGROUND_REMOVE);
             super.onDestroy();
         }
 
         @Override
+        public void onRevoke() {
+            Log.w(TAG, "VpnService permission revoked by the system");
+            shutdownOwner("revoked");
+            stopSelf();
+            super.onRevoke();
+        }
+
+        @Override
         public int onStartCommand(@Nullable final Intent intent, final int flags, final int startId) {
-            // Also complete on start command for robustness
-            vpnService.complete(this);
-            // Note: TurnBackend.onVpnServiceCreated() is called in onCreate(), no need to call again here
+            startAsForeground();
             if (intent == null || intent.getComponent() == null || !intent.getComponent().getPackageName().equals(getPackageName())) {
                 Log.d(TAG, "Service started by Always-on VPN feature");
                 if (alwaysOnCallback != null)
                     alwaysOnCallback.alwaysOnTriggered();
             }
-            return super.onStartCommand(intent, flags, startId);
+            return START_STICKY;
         }
 
         public void setOwner(final GoBackend owner) {
+            if (shuttingDown.get())
+                throw new IllegalStateException("VpnService is shutting down");
+            mainHandler.removeCallbacks(idleStop);
             this.owner = owner;
+        }
+
+        public boolean isShuttingDown() {
+            return shuttingDown.get();
+        }
+
+        public void requestStopIfIdle() {
+            final GoBackend currentOwner = owner;
+            if (currentOwner != null) {
+                synchronized (currentOwner) {
+                    if (currentOwner.currentTunnelHandle != -1)
+                        return;
+                }
+            }
+            mainHandler.removeCallbacks(idleStop);
+            mainHandler.postDelayed(idleStop, IDLE_STOP_DELAY_MS);
+        }
+
+        private void stopIfStillIdle() {
+            final GoBackend currentOwner = owner;
+            if (currentOwner != null) {
+                synchronized (currentOwner) {
+                    if (currentOwner.currentTunnelHandle != -1)
+                        return;
+                    shutdownOwner("idle");
+                }
+            } else {
+                shutdownOwner("idle");
+            }
+            stopSelf();
+        }
+
+        private void shutdownOwner(final String reason) {
+            if (!shuttingDown.compareAndSet(false, true))
+                return;
+            mainHandler.removeCallbacks(idleStop);
+            Log.d(TAG, "Stopping VpnService lifecycle: " + reason);
+            final boolean controlsActiveBackend = isActiveVpnService(this);
+            if (controlsActiveBackend)
+                TurnBackend.wgTurnProxyStop();
+            final GoBackend currentOwner = owner;
+            owner = null;
+            if (currentOwner != null && controlsActiveBackend)
+                currentOwner.handleVpnServiceTermination();
+            if (!"idle".equals(reason) && controlsActiveBackend && vpnServiceLifecycleCallback != null)
+                vpnServiceLifecycleCallback.onUnexpectedTermination(reason);
+        }
+
+        private void startAsForeground() {
+            final NotificationManager notificationManager = getSystemService(NotificationManager.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                final NotificationChannel channel = new NotificationChannel(
+                        NOTIFICATION_CHANNEL_ID,
+                        getString(com.wireguard.android.tunnel.R.string.vpn_notification_channel),
+                        NotificationManager.IMPORTANCE_LOW);
+                channel.setShowBadge(false);
+                notificationManager.createNotificationChannel(channel);
+            }
+
+            final Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    ? new Notification.Builder(this, NOTIFICATION_CHANNEL_ID)
+                    : new Notification.Builder(this);
+            builder.setSmallIcon(android.R.drawable.stat_sys_upload_done)
+                    .setContentTitle(getApplicationInfo().loadLabel(getPackageManager()))
+                    .setContentText(getString(com.wireguard.android.tunnel.R.string.vpn_notification_text))
+                    .setCategory(Notification.CATEGORY_SERVICE)
+                    .setOngoing(true)
+                    .setOnlyAlertOnce(true)
+                    .setVisibility(Notification.VISIBILITY_PRIVATE);
+            final Intent launchIntent = getPackageManager().getLaunchIntentForPackage(getPackageName());
+            if (launchIntent != null) {
+                final PendingIntent contentIntent = PendingIntent.getActivity(
+                        this,
+                        0,
+                        launchIntent,
+                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                builder.setContentIntent(contentIntent);
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                        NOTIFICATION_ID,
+                        builder.build(),
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED);
+            } else {
+                startForeground(NOTIFICATION_ID, builder.build());
+            }
         }
     }
 }

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="vpn_notification_channel">Туннельное подключение</string>
+    <string name="vpn_notification_text">Туннель активен</string>
+</resources>

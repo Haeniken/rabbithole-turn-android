@@ -1,0 +1,7 @@
+Lcom/wireguard/android/Application;
+Lcom/wireguard/android/activity/MainActivity;
+Lcom/wireguard/android/fragment/TunnelListFragment;
+Lcom/wireguard/android/model/TunnelManager;
+Lcom/wireguard/android/turn/ConnectionStateMachine;
+Lcom/wireguard/android/widget/DeepPortalBackgroundView;
+Lcom/wireguard/android/widget/PrismaticPowerView;

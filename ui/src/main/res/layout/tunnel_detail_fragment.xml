@@ -363,38 +363,20 @@
                         android:id="@+id/turn_peer_text"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="@{tunnel.turnSettings.peer}"
+                        android:text="@string/turn_server_hidden"
                         android:textAppearance="?attr/textAppearanceBodyLarge"
                         app:layout_constraintStart_toStartOf="parent"
                         app:layout_constraintTop_toBottomOf="@+id/turn_peer_label"
                         tools:text="1.2.3.4:56000" />
 
                     <TextView
-                        android:id="@+id/turn_mode_label"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:text="@string/turn_mode"
-                        app:layout_constraintStart_toStartOf="parent"
-                        app:layout_constraintTop_toBottomOf="@+id/turn_peer_text" />
-
-                    <TextView
-                        android:id="@+id/turn_mode_text"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text='@{tunnel.turnSettings.mode.equals("wb") ? @string/turn_mode_wb : @string/turn_mode_vk_link}'
-                        android:textAppearance="?attr/textAppearanceBodyLarge"
-                        app:layout_constraintStart_toStartOf="parent"
-                        app:layout_constraintTop_toBottomOf="@+id/turn_mode_label" />
-
-                    <TextView
                         android:id="@+id/turn_options_label"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
-                        android:text="Options"
+                        android:text="@string/turn_options"
                         app:layout_constraintStart_toStartOf="parent"
-                        app:layout_constraintTop_toBottomOf="@+id/turn_mode_text" />
+                        app:layout_constraintTop_toBottomOf="@+id/turn_peer_text" />
 
                     <TextView
                         android:id="@+id/turn_options_text"

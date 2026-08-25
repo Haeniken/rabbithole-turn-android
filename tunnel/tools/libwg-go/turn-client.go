@@ -1014,25 +1014,17 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n C.int
 		}
 	}
 
-	// Determine link for VK mode (for WB mode, link is just "wb")
-	var link string
-	if mode == "wb" {
-		link = "wb"
-	} else {
-		parts := strings.Split(vklink, "join/")
-		link = parts[len(parts)-1]
-		if idx := strings.IndexAny(link, "/?#"); idx != -1 {
-			link = link[:idx]
-		}
+	if mode != "vk_link" {
+		turnLog("[PROXY] Unsupported credential mode: %s", mode)
+		return -1
 	}
-	var fetcher fetchFunc
-	if mode == "wb" {
-		turnLog("[PROXY] Using WB credential mode")
-		fetcher = wbFetch
-	} else {
-		turnLog("[PROXY] Using VK Link credential mode")
-		fetcher = fetchVkCreds
+	parts := strings.Split(vklink, "join/")
+	link := parts[len(parts)-1]
+	if idx := strings.IndexAny(link, "/?#"); idx != -1 {
+		link = link[:idx]
 	}
+	turnLog("[PROXY] Using VK Link credentials")
+	fetcher := fetchVkCreds
 	poolKey := fmt.Sprintf("%s|%s|%d|%d", mode, link, int(n), streamsPerCredential)
 	credPool := getCredentialPool(poolKey, link, int(n), streamsPerCredential, fetcher)
 	getCreds := func(ctx context.Context, streamID int) (*credentialLease, error) {

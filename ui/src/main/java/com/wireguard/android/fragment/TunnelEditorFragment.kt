@@ -51,19 +51,7 @@ class TunnelEditorFragment : BaseFragment(), MenuProvider {
         val currentTurn = tunnel?.turnSettings
         binding?.config = ConfigProxy(config, currentTurn)
         binding?.executePendingBindings()
-        // Update spinner selections after config is loaded
-        updateTurnModeSpinner()
         updateTurnPeerTypeSpinner()
-    }
-
-    private fun updateTurnModeSpinner() {
-        binding?.apply {
-            val currentMode = config?.turn?.mode ?: "vk_link"
-            val modeText = if (currentMode == "wb") getString(R.string.turn_mode_wb) else getString(R.string.turn_mode_vk_link)
-            if (turnModeSpinner.text.toString() != modeText) {
-                turnModeSpinner.setText(modeText, false)
-            }
-        }
     }
 
     private fun updateTurnPeerTypeSpinner() {
@@ -152,15 +140,7 @@ class TunnelEditorFragment : BaseFragment(), MenuProvider {
         super.onViewCreated(view, savedInstanceState)
         requireActivity().addMenuProvider(this, viewLifecycleOwner, Lifecycle.State.RESUMED)
 
-        // Setup TURN mode dropdown
         binding?.apply {
-            val turnModeAdapter = ArrayAdapter.createFromResource(
-                requireContext(),
-                R.array.turn_mode_options,
-                android.R.layout.simple_dropdown_item_1line
-            )
-            turnModeSpinner.setAdapter(turnModeAdapter)
-
             // Setup TURN peer type dropdown
             val turnPeerTypeAdapter = ArrayAdapter.createFromResource(
                 requireContext(),
@@ -168,25 +148,6 @@ class TunnelEditorFragment : BaseFragment(), MenuProvider {
                 android.R.layout.simple_dropdown_item_1line
             )
             turnPeerTypeSpinner.setAdapter(turnPeerTypeAdapter)
-
-            val currentMode = config?.turn?.mode ?: "vk_link"
-            val modeIndex = when (currentMode) {
-                "wb" -> 1
-                else -> 0
-            }
-            if (turnModeSpinner.text.isNotEmpty()) {
-                val currentText = turnModeSpinner.text.toString()
-                val existingIndex = turnModeAdapter.getPosition(currentText)
-                if (existingIndex != modeIndex) {
-                    turnModeSpinner.setText(turnModeAdapter.getItem(modeIndex) ?: "", false)
-                }
-            } else {
-                turnModeSpinner.setText(turnModeAdapter.getItem(modeIndex) ?: "", false)
-            }
-
-            turnModeSpinner.setOnItemClickListener { _, _, position, _ ->
-                config?.turn?.mode = if (position == 1) "wb" else "vk_link"
-            }
 
             val currentPeerType = config?.turn?.peerType ?: "proxy_v2"
             val peerTypeIndex = when (currentPeerType) {

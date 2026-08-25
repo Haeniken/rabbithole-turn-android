@@ -213,7 +213,7 @@
         <androidx.constraintlayout.widget.ConstraintLayout
             android:id="@+id/actions_strip"
             android:layout_width="0dp"
-            android:layout_height="48dp"
+            android:layout_height="52dp"
             android:layout_marginStart="@dimen/main_screen_horizontal_padding"
             android:layout_marginTop="10dp"
             android:layout_marginEnd="@dimen/main_screen_horizontal_padding"
@@ -250,8 +250,8 @@
 
             <com.google.android.material.card.MaterialCardView
                 android:id="@+id/subscription_refresh"
-                android:layout_width="38dp"
-                android:layout_height="38dp"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
                 android:layout_marginEnd="4dp"
                 android:clickable="true"
                 android:contentDescription="@string/subscription_update"
@@ -259,7 +259,7 @@
                 android:foreground="?attr/selectableItemBackground"
                 android:visibility="gone"
                 app:cardBackgroundColor="@android:color/transparent"
-                app:cardCornerRadius="19dp"
+                app:cardCornerRadius="24dp"
                 app:cardElevation="0dp"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
@@ -286,15 +286,15 @@
 
             <com.google.android.material.card.MaterialCardView
                 android:id="@+id/latency_check"
-                android:layout_width="38dp"
-                android:layout_height="38dp"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
                 android:layout_marginEnd="7dp"
                 android:clickable="true"
                 android:contentDescription="@string/latency_check"
                 android:focusable="true"
                 android:foreground="?attr/selectableItemBackground"
                 app:cardBackgroundColor="@android:color/transparent"
-                app:cardCornerRadius="19dp"
+                app:cardCornerRadius="24dp"
                 app:cardElevation="0dp"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toStartOf="@id/subscription_refresh"

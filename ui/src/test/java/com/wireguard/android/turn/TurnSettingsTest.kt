@@ -6,6 +6,7 @@ package com.wireguard.android.turn
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class TurnSettingsTest {
@@ -22,5 +23,19 @@ class TurnSettingsTest {
 
         assertEquals("Резерв", settings?.profileSubtitle)
         assertTrue(settings!!.toComments().contains("#@rhv:ProfileSubtitle = Резерв"))
+    }
+
+    @Test
+    fun legacyWbModeIsIgnoredAndVkLinkRemainsRequired() {
+        val settings = TurnSettings.fromComments(
+            listOf(
+                "#@wgt:EnableTURN = true",
+                "#@wgt:IPPort = example.invalid:443",
+                "#@wgt:Mode = wb",
+            ),
+        )!!
+
+        assertThrows(IllegalArgumentException::class.java) { TurnSettings.validate(settings) }
+        assertTrue(settings.toComments().none { it.startsWith("#@wgt:Mode") })
     }
 }

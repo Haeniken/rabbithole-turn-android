@@ -26,7 +26,9 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.view.ActionMode
 import androidx.databinding.Observable
 import androidx.databinding.ObservableList
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.snackbar.Snackbar
 import com.google.zxing.qrcode.QRCodeReader
 import com.journeyapps.barcodescanner.ScanContract
@@ -47,6 +49,7 @@ import com.wireguard.android.databinding.TunnelListFragmentBinding
 import com.wireguard.android.databinding.TunnelListItemBinding
 import com.wireguard.android.model.ObservableTunnel
 import com.wireguard.android.subscription.SubscriptionManager
+import com.wireguard.android.turn.ConnectionStateMachine
 import com.wireguard.android.updater.SnackbarUpdateShower
 import com.wireguard.android.util.ErrorMessages
 import com.wireguard.android.util.QrCodeFromFileScanner
@@ -166,6 +169,11 @@ class TunnelListFragment : BaseFragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         binding?.let { snackbarUpdateShower.attach(it.mainContainer, null) }
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                Application.getConnectionStateMachine().state.collect(::applyConnectionSnapshot)
+            }
+        }
         parentFragmentManager.setFragmentResultListener(
             SubscriptionDialogFragment.REQUEST_KEY_SUBSCRIPTION_RESULT,
             viewLifecycleOwner,
@@ -486,9 +494,17 @@ class TunnelListFragment : BaseFragment() {
         if (!transitioning) isPowerStarting = false
     }
 
+    private fun applyConnectionSnapshot(snapshot: ConnectionStateMachine.Snapshot) {
+        val starting = snapshot.phase in STARTING_CONNECTION_PHASES
+        val stopping = snapshot.phase == ConnectionStateMachine.Phase.STOPPING
+        if (starting) isPowerStarting = true
+        setPowerTransitioning(starting || stopping)
+    }
+
     private fun cancelPowerTransition(tunnel: ObservableTunnel) {
         if (isPowerCancellationRequested) return
         isPowerCancellationRequested = true
+        val stopSession = Application.getConnectionStateMachine().beginStop(tunnel.name)
         powerTransitionJob?.cancel()
         powerTransitionJob = null
         cancelPendingTunnelRequest(tunnel)
@@ -498,11 +514,20 @@ class TunnelListFragment : BaseFragment() {
         lifecycleScope.launch {
             try {
                 Application.getTurnProxyManager().stopForTunnel(tunnel.name)
-                (Application.getBackend() as? GoBackend)?.stopVpnServiceIfIdle()
+                val backend = Application.getBackend()
+                // The blocking native start may complete after coroutine cancellation. Drive
+                // the backend to DOWN explicitly so cancellation cannot leave a live VPN whose
+                // stale callback is correctly rejected by the generation state machine.
+                withContext(Dispatchers.IO) {
+                    backend.setState(tunnel, Tunnel.State.DOWN, null)
+                    (backend as? GoBackend)?.stopVpnServiceIfIdle()
+                }
                 showSnackbar(getString(R.string.main_connection_cancelled))
             } catch (e: Throwable) {
                 Log.w(TAG, "Unable to finish cancelled tunnel startup", e)
             } finally {
+                if (stopSession != null)
+                    Application.getConnectionStateMachine().finishStop(stopSession)
                 isPowerCancellationRequested = false
                 updatePowerControls()
             }
@@ -523,6 +548,11 @@ class TunnelListFragment : BaseFragment() {
             mainPowerButton.isActivated = activeTunnel != null
             mainPowerButton.setAnimating(isPowerTransitioning)
             portalBackground.setConnecting(isPowerTransitioning && isPowerStarting)
+            heroTunnelName.setTextColor(
+                root.context.getColor(
+                    if (!isPowerTransitioning && activeTunnel != null) R.color.rabbit_power_active else R.color.rabbit_text_primary
+                )
+            )
             if (isPowerTransitioning) {
                 heroTunnelName.setText(if (isPowerStarting) R.string.main_connecting else R.string.main_disconnecting)
                 heroHint.visibility = if (isPowerStarting) View.VISIBLE else View.GONE
@@ -812,6 +842,15 @@ class TunnelListFragment : BaseFragment() {
         private const val LATENCY_REQUEST_COUNT = 2
         private const val LATENCY_TIMEOUT_MS = 5_000
         private const val CONNECTION_MESSAGE_INTERVAL_MS = 2_300L
+        private val STARTING_CONNECTION_PHASES = setOf(
+            ConnectionStateMachine.Phase.PREPARING,
+            ConnectionStateMachine.Phase.DOWNLOADING_GEO_DATA,
+            ConnectionStateMachine.Phase.STARTING_VPN_SERVICE,
+            ConnectionStateMachine.Phase.AUTHORIZING,
+            ConnectionStateMachine.Phase.CAPTCHA_REQUIRED,
+            ConnectionStateMachine.Phase.CONNECTING_TRANSPORT,
+            ConnectionStateMachine.Phase.CONNECTING_TUNNEL,
+        )
         private const val CHECKED_ITEMS = "CHECKED_ITEMS"
         private const val TAG = "WireGuard/TunnelListFragment"
     }
