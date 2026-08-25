@@ -9,11 +9,11 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import kotlinx.coroutines.flow.first
 
-/** Global opt-in for TURN/UDP with an automatic fallback to TURN/TCP. */
+/** Global TURN/UDP preference with an automatic fallback to TURN/TCP. */
 object OptionalTurnUdp {
     const val PREFERENCE_KEY_NAME = "optional_turn_udp"
     private val preferenceKey = booleanPreferencesKey(PREFERENCE_KEY_NAME)
 
     suspend fun isEnabled(dataStore: DataStore<Preferences>): Boolean =
-        dataStore.data.first()[preferenceKey] ?: false
+        dataStore.data.first()[preferenceKey] ?: true
 }

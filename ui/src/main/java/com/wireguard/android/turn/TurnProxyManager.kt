@@ -250,7 +250,7 @@ class TurnProxyManager(private val context: Context) {
                 val detailedDiagnostics = DetailedDiagnostics.isEnabled(preferences)
                 val optionalTurnUdp = OptionalTurnUdp.isEnabled(preferences)
                 // Keep accepting the established per-profile UseUDP flag, but
-                // give it the same safe semantics as the global opt-in: UDP is
+                // give it the same safe semantics as the global preference: UDP is
                 // preferred and TCP remains an automatic fallback.
                 val turnTransportMode = if (optionalTurnUdp || settings.useUdp) {
                     TURN_TRANSPORT_UDP_WITH_TCP_FALLBACK
