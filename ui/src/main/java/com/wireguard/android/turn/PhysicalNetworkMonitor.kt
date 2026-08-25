@@ -37,7 +37,10 @@ class PhysicalNetworkMonitor(context: Context) {
      * Synchronously get the current best network without debounce.
      */
     val currentNetwork: Network?
-        get() = _bestNetwork.value
+        get() {
+            update()
+            return _bestNetwork.value
+        }
 
     private val networks = ConcurrentHashMap<Network, NetworkCapabilities>()
 
@@ -62,12 +65,36 @@ class PhysicalNetworkMonitor(context: Context) {
     }
 
     private fun update() {
-        // Priority logic: WiFi first, then Cellular, then any other physical network with internet
-        val wifi = networks.entries.find { it.value.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) }?.key
-        val cell = networks.entries.find { it.value.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) }?.key
+        // A delayed onLost callback must not leave a vanished Android network handle selected.
+        // Prefer validated physical paths, but keep an INTERNET-capable fallback for networks
+        // whose OEM validation endpoint is unavailable.
+        val available = networks.keys.mapNotNull { network ->
+            val caps = cm.getNetworkCapabilities(network)
+            if (
+                caps == null ||
+                !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
+                !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            ) {
+                networks.remove(network)
+                null
+            } else {
+                networks[network] = caps
+                network to caps
+            }
+        }
+        val validated = available.filter { (_, caps) ->
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        }
+        val candidates = validated.ifEmpty { available }
+        val wifi = candidates.firstOrNull { (_, caps) ->
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+        }?.first
+        val cell = candidates.firstOrNull { (_, caps) ->
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+        }?.first
         
         // If no WiFi/Cellular found, take the first available network from our list
-        val best = wifi ?: cell ?: networks.keys.firstOrNull()
+        val best = wifi ?: cell ?: candidates.firstOrNull()?.first
         _bestNetwork.value = best
     }
 

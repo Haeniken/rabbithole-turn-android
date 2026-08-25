@@ -84,9 +84,21 @@ class TurnProxyManager(
             return
         }
 
-        // 3. Real change confirmed. Keep the established pool alive until the
-        // native layer has at least two streams ready on the new physical path.
+        // 3. Real change confirmed. Keep the established pool alive only while
+        // Android still reports the old physical path. Otherwise skip straight
+        // to a restart instead of waiting on sockets bound to a vanished handle.
         val oldNetwork = lastKnownNetwork
+        if (!isNetworkAvailable(oldNetwork)) {
+            Log.w(TAG, "Old physical network $oldNetwork is gone; restarting directly on $network")
+            lastKnownNetwork = networkMonitor.currentNetwork
+            connectionStateMachine.transition(
+                session,
+                ConnectionStateMachine.Phase.DEGRADED,
+                "Physical network changed",
+            )
+            performRestartSequence(session)
+            return
+        }
         val networkHandle = network.getNetworkHandle()
         Log.d(TAG, "Network change confirmed: $oldNetwork -> $network. Preparing make-before-break handover.")
         connectionStateMachine.transition(session, ConnectionStateMachine.Phase.HANDING_OVER_NETWORK)
@@ -102,8 +114,13 @@ class TurnProxyManager(
                 operationMutex.unlock()
             }
         }
-        lastKnownNetwork = network
-        if (handoverResult == TurnBackend.WG_TURN_PROXY_SUCCESS) {
+        val latestNetwork = networkMonitor.currentNetwork
+        lastKnownNetwork = latestNetwork
+        if (
+            handoverResult == TurnBackend.WG_TURN_PROXY_SUCCESS &&
+            latestNetwork == network &&
+            isNetworkAvailable(network)
+        ) {
             Log.d(TAG, "TURN make-before-break handover completed on $network")
             connectionStateMachine.transition(session, ConnectionStateMachine.Phase.CONNECTED)
             return
@@ -112,7 +129,11 @@ class TurnProxyManager(
         // A disappeared old network or a credential/captcha timeout can make
         // overlap impossible. Preserve the previous restart path as a bounded
         // fallback instead of leaving the tunnel on a dead socket generation.
-        Log.w(TAG, "Native handover failed ($handoverResult); falling back to a full TURN restart")
+        Log.w(
+            TAG,
+            "Native handover failed or target vanished ($handoverResult, latest=$latestNetwork); " +
+                "falling back to a full TURN restart",
+        )
         connectionStateMachine.transition(
             session,
             ConnectionStateMachine.Phase.DEGRADED,
@@ -265,18 +286,16 @@ class TurnProxyManager(
                     )
                 }
 
-                // If network is still null, try one quick re-poll from monitor
-                if (lastKnownNetwork == null) {
-                    lastKnownNetwork = networkMonitor.currentNetwork
-                    if (lastKnownNetwork == null) {
-                        Log.w(TAG, "Network still null, waiting 500ms for PhysicalNetworkMonitor...")
-                        delay(500)
-                        lastKnownNetwork = networkMonitor.currentNetwork
-                    }
-                }
-
-                val networkHandle = lastKnownNetwork?.getNetworkHandle() ?: 0L
-                val networkType = getNetworkTypeString(lastKnownNetwork)
+                // Re-read immediately before JNI start. A handover may have blocked while
+                // Android replaced the candidate network, so lastKnownNetwork is advisory.
+                val startNetwork = awaitAvailableNetwork()
+                    ?: return@withContext TurnStartResult.Failure(
+                        ERROR_PHYSICAL_NETWORK_NOT_READY,
+                        "TURN startup postponed: no usable physical network",
+                    )
+                lastKnownNetwork = startNetwork
+                val networkHandle = startNetwork.getNetworkHandle()
+                val networkType = getNetworkTypeString(startNetwork)
                 val preferences = Application.getPreferencesDataStore()
                 val detailedDiagnostics = DetailedDiagnostics.isEnabled(preferences)
                 val optionalTurnUdp = OptionalTurnUdp.isEnabled(preferences)
@@ -288,7 +307,7 @@ class TurnProxyManager(
                 } else {
                     TURN_TRANSPORT_TCP_ONLY
                 }
-                Log.d(TAG, "Starting TURN proxy for $tunnelName with network: $lastKnownNetwork (type=$networkType, handle=$networkHandle)")
+                Log.d(TAG, "Starting TURN proxy for $tunnelName with network: $startNetwork (type=$networkType, handle=$networkHandle)")
                 Log.d(TAG, "Detailed TURN diagnostics: ${if (detailedDiagnostics) "enabled" else "disabled"}")
                 Log.d(TAG, "TURN transport: ${describeTransportMode(turnTransportMode)}")
                 connectionStateMachine.transition(session, ConnectionStateMachine.Phase.AUTHORIZING)
@@ -426,6 +445,23 @@ class TurnProxyManager(
         }
     }
 
+    private fun isNetworkAvailable(network: Network?): Boolean {
+        if (network == null) return false
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val caps = cm.getNetworkCapabilities(network) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+    }
+
+    private suspend fun awaitAvailableNetwork(): Network? {
+        repeat(PHYSICAL_NETWORK_RECHECKS) {
+            val candidate = networkMonitor.currentNetwork
+            if (isNetworkAvailable(candidate)) return candidate
+            delay(PHYSICAL_NETWORK_RECHECK_DELAY_MS)
+        }
+        return null
+    }
+
     companion object {
         private const val TURN_TRANSPORT_TCP_ONLY = 0
         private const val TURN_TRANSPORT_UDP_WITH_TCP_FALLBACK = 1
@@ -438,5 +474,8 @@ class TurnProxyManager(
         private const val TAG = "WireGuard/TurnProxyManager"
         private const val MAX_LOG_CHARS = 128 * 1024
         private const val ERROR_VPN_SERVICE_NOT_READY = -1001
+        private const val ERROR_PHYSICAL_NETWORK_NOT_READY = -1002
+        private const val PHYSICAL_NETWORK_RECHECKS = 5
+        private const val PHYSICAL_NETWORK_RECHECK_DELAY_MS = 200L
     }
 }

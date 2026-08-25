@@ -2,7 +2,12 @@
 
 package main
 
-import "testing"
+import (
+	"context"
+	"sync/atomic"
+	"testing"
+	"time"
+)
 
 func TestProbePacketRoundTrip(t *testing.T) {
 	const sequence = uint64(0x0102030405060708)
@@ -21,5 +26,23 @@ func TestProbePacketRejectsWireGuardAndWrongLength(t *testing.T) {
 	}
 	if _, ok := parseProbePacket(append(makeProbePacket(1), 0)); ok {
 		t.Fatal("probe with trailing data was accepted")
+	}
+}
+
+func TestWaitForProbeEcho(t *testing.T) {
+	var pong atomic.Uint64
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		pong.Store(7)
+	}()
+	if !waitForProbeEcho(context.Background(), &pong, 7, time.Second) {
+		t.Fatal("probe echo was not observed")
+	}
+}
+
+func TestWaitForProbeEchoTimesOut(t *testing.T) {
+	var pong atomic.Uint64
+	if waitForProbeEcho(context.Background(), &pong, 1, 20*time.Millisecond) {
+		t.Fatal("missing probe echo was accepted")
 	}
 }

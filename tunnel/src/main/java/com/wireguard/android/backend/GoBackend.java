@@ -681,7 +681,7 @@ public final class GoBackend implements Backend {
             final Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                     ? new Notification.Builder(this, NOTIFICATION_CHANNEL_ID)
                     : new Notification.Builder(this);
-            builder.setSmallIcon(android.R.drawable.stat_sys_upload_done)
+            builder.setSmallIcon(com.wireguard.android.tunnel.R.drawable.ic_notification_lock)
                     .setContentTitle(getApplicationInfo().loadLabel(getPackageManager()))
                     .setContentText(getString(com.wireguard.android.tunnel.R.string.vpn_notification_text))
                     .setCategory(Notification.CATEGORY_SERVICE)

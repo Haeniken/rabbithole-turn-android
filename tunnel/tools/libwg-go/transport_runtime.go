@@ -14,7 +14,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const handoverReadyStreams = 2
+const (
+	handoverReadyStreams = 2
+	handoverTimeout      = 10 * time.Second
+)
 
 type transportRuntimeConfig struct {
 	maxStreams     int
@@ -131,7 +134,7 @@ func (r *turnRuntime) handover(networkHandle int64) error {
 	if required > newGeneration.pool.initialTarget() {
 		required = newGeneration.pool.initialTarget()
 	}
-	deadline := time.NewTimer(30 * time.Second)
+	deadline := time.NewTimer(handoverTimeout)
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer deadline.Stop()
 	defer ticker.Stop()

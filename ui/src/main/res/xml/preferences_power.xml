@@ -12,7 +12,7 @@
         android:title="@string/background_updates_title" />
 
     <CheckBoxPreference
-        android:defaultValue="false"
+        android:defaultValue="true"
         android:key="power_saving_enabled"
         android:layout="@layout/rabbit_preference"
         android:singleLineTitle="false"

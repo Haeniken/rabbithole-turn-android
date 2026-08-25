@@ -17,6 +17,18 @@ class SharingPrefixTest {
     }
 
     @Test
+    fun recognizesCommonUsbBluetoothAndEthernetInterfaceNames() {
+        assertTrue(SharingType.USB.matches("rndis0"))
+        assertTrue(SharingType.USB.matches("ncm0"))
+        assertTrue(SharingType.USB.matches("gether0"))
+        assertTrue(SharingType.BLUETOOTH.matches("bt-pan"))
+        assertTrue(SharingType.BLUETOOTH.matches("bnep0"))
+        assertTrue(SharingType.BLUETOOTH.matches("btnap0"))
+        assertTrue(SharingType.ETHERNET.matches("eth0"))
+        assertTrue(SharingType.ETHERNET.matches("usbeth0"))
+    }
+
+    @Test
     fun ipv4PrefixAcceptsOnlyTetherSubnet() {
         val prefix = SharingPrefix(InetAddress.getByName("192.168.43.1"), 24)
 
