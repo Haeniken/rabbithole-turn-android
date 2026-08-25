@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    android:key="sharing_settings">
+
+    <Preference
+        android:key="sharing_status"
+        android:layout="@layout/rabbit_preference"
+        android:selectable="false"
+        android:singleLineTitle="false"
+        android:summary="@string/sharing_status_disabled"
+        android:title="@string/sharing_status_title" />
+
+    <CheckBoxPreference
+        android:defaultValue="false"
+        android:key="sharing_wifi"
+        android:layout="@layout/rabbit_preference"
+        android:singleLineTitle="false"
+        android:summary="@string/sharing_wifi_summary"
+        android:title="@string/sharing_wifi_title" />
+
+    <CheckBoxPreference
+        android:defaultValue="false"
+        android:key="sharing_usb"
+        android:layout="@layout/rabbit_preference"
+        android:singleLineTitle="false"
+        android:summary="@string/sharing_usb_summary"
+        android:title="@string/sharing_usb_title" />
+
+    <CheckBoxPreference
+        android:defaultValue="false"
+        android:key="sharing_bluetooth"
+        android:layout="@layout/rabbit_preference"
+        android:singleLineTitle="false"
+        android:summary="@string/sharing_bluetooth_summary"
+        android:title="@string/sharing_bluetooth_title" />
+
+    <CheckBoxPreference
+        android:defaultValue="false"
+        android:key="sharing_ethernet"
+        android:layout="@layout/rabbit_preference"
+        android:singleLineTitle="false"
+        android:summary="@string/sharing_ethernet_summary"
+        android:title="@string/sharing_ethernet_title" />
+
+    <EditTextPreference
+        android:defaultValue="10808"
+        android:key="sharing_proxy_port"
+        android:layout="@layout/rabbit_preference"
+        android:singleLineTitle="false"
+        android:summary="@string/sharing_proxy_port_summary"
+        android:title="@string/sharing_proxy_port_title" />
+
+    <Preference
+        android:key="sharing_system_settings"
+        android:layout="@layout/rabbit_preference"
+        android:singleLineTitle="false"
+        android:summary="@string/sharing_system_settings_summary"
+        android:title="@string/sharing_system_settings_title" />
+
+    <Preference
+        android:key="sharing_windows_help"
+        android:layout="@layout/rabbit_preference"
+        android:singleLineTitle="false"
+        android:summary="@string/sharing_windows_help_summary"
+        android:title="@string/sharing_windows_help_title" />
+</androidx.preference.PreferenceScreen>

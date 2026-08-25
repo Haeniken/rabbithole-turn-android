@@ -10,6 +10,7 @@
 
     <style name="AppThemeBase" parent="WireGuardTheme">
         <item name="materialCardViewStyle">@style/WireGuardTheme.MaterialCardView</item>
+        <item name="materialAlertDialogTheme">@style/RabbitAlertDialogTheme</item>
         <item name="toolbarStyle">@style/WireGuardTheme.Toolbar</item>
         <item name="bottomSheetDialogTheme">@style/WireGuardTheme.BottomSheetDialog</item>
         <item name="android:statusBarColor">?android:colorBackground</item>
@@ -166,11 +167,29 @@
     </style>
 
     <style name="RabbitAlertDialogTheme" parent="ThemeOverlay.Material3.MaterialAlertDialog">
+        <item name="alertDialogStyle">@style/RabbitMaterialAlertDialog</item>
+        <item name="buttonBarButtonStyle">@style/RabbitDialogButton</item>
+        <item name="buttonBarPositiveButtonStyle">@style/RabbitDialogButton</item>
+        <item name="buttonBarNegativeButtonStyle">@style/RabbitDialogButton</item>
+        <item name="buttonBarNeutralButtonStyle">@style/RabbitDialogButton</item>
         <item name="colorPrimary">@color/rabbit_accent_soft</item>
         <item name="colorSurface">@color/rabbit_card</item>
         <item name="colorOnSurface">@color/rabbit_text_primary</item>
         <item name="colorOnSurfaceVariant">@color/rabbit_text_secondary</item>
         <item name="colorOutline">@color/rabbit_outline_bright</item>
+    </style>
+
+    <style name="RabbitMaterialAlertDialog" parent="MaterialAlertDialog.Material3">
+        <!-- The stock bottom inset can cover the second row of buttons on large-font Samsung builds. -->
+        <item name="backgroundInsetBottom">0dp</item>
+    </style>
+
+    <style name="RabbitDialogButton" parent="Widget.Material3.Button.TextButton.Dialog">
+        <item name="android:minWidth">0dp</item>
+        <item name="android:paddingLeft">10dp</item>
+        <item name="android:paddingRight">10dp</item>
+        <item name="android:paddingStart">10dp</item>
+        <item name="android:paddingEnd">10dp</item>
     </style>
 
     <style name="RabbitQrButton" parent="Widget.Material3.Button.TonalButton.Icon">

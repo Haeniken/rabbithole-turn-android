@@ -5,11 +5,12 @@
 package com.wireguard.android.activity
 
 import android.content.Context
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.PowerManager
 import android.provider.Settings
 import android.text.InputType
 import android.view.LayoutInflater
@@ -21,6 +22,8 @@ import androidx.annotation.XmlRes
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.commit
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.preference.CheckBoxPreference
 import androidx.preference.EditTextPreference
 import androidx.preference.Preference
@@ -37,6 +40,9 @@ import com.wireguard.android.preference.PreferencesPreferenceDataStore
 import com.wireguard.android.routing.ManualRouteExclusions
 import com.wireguard.android.routing.RoutingListManager
 import com.wireguard.android.routing.RoutingListUpdateWorker
+import com.wireguard.android.sharing.SharingController
+import com.wireguard.android.sharing.SharingSettings
+import com.wireguard.android.sharing.SharingType
 import com.wireguard.android.subscription.SubscriptionSettings
 import com.wireguard.android.subscription.SubscriptionUpdateWorker
 import com.wireguard.android.updater.Updater
@@ -44,6 +50,7 @@ import com.wireguard.android.util.AdminKnobs
 import com.wireguard.android.util.CaptchaBrowserProfile
 import com.wireguard.android.util.GlobalAppExclusions
 import com.wireguard.android.util.QuantityFormatter
+import com.wireguard.android.util.PowerPolicySettings
 import com.wireguard.android.util.TurnUserAgentSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -61,6 +68,8 @@ class SettingsActivity : AppCompatActivity() {
         val (title, fragment) = when (page) {
             PAGE_SUBSCRIPTIONS -> R.string.subscription_settings_title to SubscriptionSettingsFragment()
             PAGE_ROUTING -> R.string.routing_settings_title to RoutingSettingsFragment()
+            PAGE_POWER -> R.string.power_settings_title to PowerSettingsFragment()
+            PAGE_SHARING -> R.string.sharing_settings_title to SharingSettingsFragment()
             else -> R.string.settings to SettingsFragment()
         }
         supportActionBar?.setTitle(title)
@@ -122,7 +131,7 @@ class SettingsActivity : AppCompatActivity() {
 
         override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
             super.onCreatePreferences(savedInstanceState, rootKey)
-            preferenceScreen.initialExpandedChildrenCount = 5
+            preferenceScreen.initialExpandedChildrenCount = 7
 
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || QuickTileService.isAdded) {
                 val quickTile = preferenceManager.findPreference<Preference>("quick_tile")
@@ -159,8 +168,12 @@ class SettingsActivity : AppCompatActivity() {
                 openPage(PAGE_ROUTING)
                 true
             }
-            preferenceManager.findPreference<Preference>("background_activity")?.setOnPreferenceClickListener {
-                openBackgroundActivitySettings()
+            preferenceManager.findPreference<Preference>("power_settings")?.setOnPreferenceClickListener {
+                openPage(PAGE_POWER)
+                true
+            }
+            preferenceManager.findPreference<Preference>("sharing_settings")?.setOnPreferenceClickListener {
+                openPage(PAGE_SHARING)
                 true
             }
             preferenceManager.findPreference<Preference>("log_viewer")?.setOnPreferenceClickListener {
@@ -214,32 +227,6 @@ class SettingsActivity : AppCompatActivity() {
                 }
                 true
             }
-        }
-
-        private fun openBackgroundActivitySettings() {
-            val context = requireContext()
-            val packageUri = Uri.parse("package:${context.packageName}")
-            val powerManager = context.getSystemService(PowerManager::class.java)
-            val intents = buildList {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-                    powerManager?.isIgnoringBatteryOptimizations(context.packageName) != true
-                ) {
-                    add(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, packageUri))
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
-                    add(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-                add(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, packageUri))
-            }
-            val opened = intents.any { intent ->
-                try {
-                    startActivity(intent)
-                    true
-                } catch (_: Throwable) {
-                    false
-                }
-            }
-            if (!opened)
-                Toast.makeText(context, R.string.background_activity_open_failed, Toast.LENGTH_LONG).show()
         }
 
         private fun configureKernelModulePreference() {
@@ -522,10 +509,239 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
+    class PowerSettingsFragment : StyledSettingsFragment() {
+        override val preferenceResource = R.xml.preferences_power
+
+        override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
+            super.onCreatePreferences(savedInstanceState, rootKey)
+            preferenceManager.findPreference<CheckBoxPreference>(
+                PowerPolicySettings.BACKGROUND_UPDATES_KEY_NAME,
+            )?.setOnPreferenceChangeListener { _, rawValue ->
+                applyPowerPolicy(backgroundUpdatesEnabled = rawValue as Boolean)
+                true
+            }
+            preferenceManager.findPreference<CheckBoxPreference>(
+                PowerPolicySettings.POWER_SAVING_KEY_NAME,
+            )?.setOnPreferenceChangeListener { _, rawValue ->
+                applyPowerPolicy(powerSavingEnabled = rawValue as Boolean)
+                true
+            }
+        }
+
+        private fun applyPowerPolicy(
+            backgroundUpdatesEnabled: Boolean? = null,
+            powerSavingEnabled: Boolean? = null,
+        ) {
+            val current = PowerPolicySettings.current()
+            val updated = current.copy(
+                backgroundUpdatesEnabled = backgroundUpdatesEnabled ?: current.backgroundUpdatesEnabled,
+                powerSavingEnabled = powerSavingEnabled ?: current.powerSavingEnabled,
+            )
+            PowerPolicySettings.applyImmediate(updated)
+            lifecycleScope.launch {
+                if (!updated.backgroundUpdatesEnabled) {
+                    RoutingListUpdateWorker.cancelAll(requireContext())
+                    SubscriptionUpdateWorker.cancelAll(requireContext())
+                } else if (backgroundUpdatesEnabled != null) {
+                    RoutingListUpdateWorker.configureAtStartup(
+                        requireContext(),
+                        Application.getRoutingListManager().hasData(),
+                        updated,
+                    )
+                    SubscriptionUpdateWorker.configureAtStartup(requireContext(), updated)
+                } else {
+                    if (Application.getRoutingListManager().hasData()) {
+                        RoutingListUpdateWorker.schedulePeriodic(requireContext(), updated)
+                    }
+                    val subscriptionSettings = SubscriptionSettings.load(
+                        Application.getPreferencesDataStore(),
+                    )
+                    SubscriptionUpdateWorker.schedulePeriodic(
+                        requireContext(),
+                        subscriptionSettings.automaticUpdates,
+                        subscriptionSettings.intervalHours,
+                        updated,
+                    )
+                }
+            }
+        }
+    }
+
+    class SharingSettingsFragment : StyledSettingsFragment() {
+        override val preferenceResource = R.xml.preferences_sharing
+
+        override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
+            super.onCreatePreferences(savedInstanceState, rootKey)
+            configureType("sharing_wifi", SharingType.WIFI)
+            configureType("sharing_usb", SharingType.USB)
+            configureType("sharing_bluetooth", SharingType.BLUETOOTH)
+            configureType("sharing_ethernet", SharingType.ETHERNET)
+
+            preferenceManager.findPreference<EditTextPreference>("sharing_proxy_port")?.apply {
+                setOnBindEditTextListener { editText ->
+                    editText.inputType = InputType.TYPE_CLASS_NUMBER
+                    editText.isSingleLine = true
+                    editText.selectAll()
+                }
+                setOnPreferenceChangeListener { _, value ->
+                    val port = value?.toString()?.toIntOrNull()
+                    if (port == null || port !in SharingSettings.MIN_PROXY_PORT..65535) {
+                        Toast.makeText(requireContext(), R.string.sharing_proxy_port_invalid, Toast.LENGTH_LONG).show()
+                        false
+                    } else {
+                        true
+                    }
+                }
+            }
+            preferenceManager.findPreference<Preference>("sharing_system_settings")?.setOnPreferenceClickListener {
+                openTetherSettings()
+                true
+            }
+            preferenceManager.findPreference<Preference>("sharing_windows_help")?.setOnPreferenceClickListener {
+                val status = SharingController.status.value
+                val gateway = status.gateways.firstOrNull() ?: "PHONE_IP"
+                val port = status.proxyPort
+                val singBoxConfig = """
+                    {
+                      "dns": {
+                        "servers": [
+                          {
+                            "type": "udp",
+                            "tag": "adguard",
+                            "server": "94.140.14.14",
+                            "server_port": 53,
+                            "detour": "phone"
+                          },
+                          {
+                            "type": "udp",
+                            "tag": "adguard-backup",
+                            "server": "94.140.15.15",
+                            "server_port": 53,
+                            "detour": "phone"
+                          }
+                        ],
+                        "final": "adguard"
+                      },
+                      "inbounds": [
+                        {
+                          "type": "tun",
+                          "tag": "tun-in",
+                          "address": ["172.19.0.1/30"],
+                          "mtu": 1280,
+                          "auto_route": true,
+                          "strict_route": true,
+                          "route_exclude_address": ["$gateway/32"]
+                        }
+                      ],
+                      "outbounds": [
+                        {
+                          "type": "socks",
+                          "tag": "phone",
+                          "server": "$gateway",
+                          "server_port": $port,
+                          "version": "5"
+                        }
+                      ],
+                      "route": {
+                        "auto_detect_interface": true,
+                        "rules": [
+                          {
+                            "action": "hijack-dns",
+                            "protocol": "dns"
+                          }
+                        ],
+                        "final": "phone"
+                      }
+                    }
+                """.trimIndent()
+                val dialog = MaterialAlertDialogBuilder(requireContext())
+                    .setTitle(R.string.sharing_windows_help_title)
+                    .setMessage(getString(R.string.sharing_windows_help_message, gateway, port, singBoxConfig))
+                    .setNegativeButton(android.R.string.ok, null)
+                    .setNeutralButton(R.string.sharing_windows_copy_config, null)
+                    .setPositiveButton(R.string.sharing_windows_open_sing_box_short) { _, _ ->
+                        startActivity(
+                            Intent(
+                                Intent.ACTION_VIEW,
+                                Uri.parse("https://sing-box.sagernet.org/installation/package-manager/"),
+                            ),
+                        )
+                    }
+                    .create()
+                dialog.setOnShowListener {
+                    dialog.findViewById<android.widget.TextView>(android.R.id.message)
+                        ?.setTextIsSelectable(true)
+                    dialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                        requireContext().getSystemService(ClipboardManager::class.java)?.setPrimaryClip(
+                            ClipData.newPlainText(getString(R.string.sharing_windows_config_label), singBoxConfig),
+                        )
+                        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                            Toast.makeText(
+                                requireContext(),
+                                R.string.sharing_windows_config_copied,
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    }
+                }
+                dialog.show()
+                true
+            }
+        }
+
+        override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+            super.onViewCreated(view, savedInstanceState)
+            viewLifecycleOwner.lifecycleScope.launch {
+                viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    SharingController.status.collect(::showStatus)
+                }
+            }
+        }
+
+        private fun configureType(key: String, type: SharingType) {
+            preferenceManager.findPreference<CheckBoxPreference>(key)?.setOnPreferenceChangeListener { _, value ->
+                SharingController.requestTetheringChange(type, value as Boolean)
+                true
+            }
+        }
+
+        private fun showStatus(status: SharingController.Status) {
+            val preference = preferenceManager.findPreference<Preference>("sharing_status") ?: return
+            val endpoints = status.gateways.joinToString().ifEmpty { status.interfaces.joinToString() }
+            preference.summary = when (status.mode) {
+                SharingController.Mode.DISABLED -> getString(R.string.sharing_status_disabled)
+                SharingController.Mode.WAITING_VPN -> getString(R.string.sharing_status_waiting_vpn)
+                SharingController.Mode.WAITING_INTERFACE -> getString(R.string.sharing_status_waiting_interface)
+                SharingController.Mode.ROOT -> getString(R.string.sharing_status_root, endpoints)
+                SharingController.Mode.PROXY -> getString(
+                    R.string.sharing_status_proxy,
+                    endpoints,
+                    status.proxyPort,
+                )
+                SharingController.Mode.ERROR -> getString(
+                    R.string.sharing_status_error,
+                    status.error.orEmpty(),
+                )
+            }
+        }
+
+        private fun openTetherSettings() {
+            val intents = listOf(
+                Intent("android.settings.TETHER_SETTINGS"),
+                Intent(Settings.ACTION_WIRELESS_SETTINGS),
+                Intent(Settings.ACTION_SETTINGS),
+            )
+            intents.firstOrNull { it.resolveActivity(requireContext().packageManager) != null }
+                ?.let(::startActivity)
+        }
+    }
+
     companion object {
         private const val EXTRA_PAGE = "settings_page"
         private const val PAGE_SUBSCRIPTIONS = "subscriptions"
         private const val PAGE_ROUTING = "routing"
+        private const val PAGE_POWER = "power"
+        private const val PAGE_SHARING = "sharing"
 
         private fun createIntent(context: Context, page: String): Intent =
             Intent(context, SettingsActivity::class.java).putExtra(EXTRA_PAGE, page)

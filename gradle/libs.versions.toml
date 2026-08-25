@@ -1,6 +1,7 @@
 [versions]
 agp = "8.13.2"
 kotlin = "2.3.0"
+wire = "6.4.0"
 
 [libraries]
 androidx-activity-ktx = "androidx.activity:activity-ktx:1.12.2"
@@ -15,6 +16,7 @@ androidx-datastore-preferences = "androidx.datastore:datastore-preferences:1.2.0
 androidx-fragment-ktx = "androidx.fragment:fragment-ktx:1.8.9"
 androidx-lifecycle-runtime-ktx = "androidx.lifecycle:lifecycle-runtime-ktx:2.10.0"
 androidx-preference-ktx = "androidx.preference:preference-ktx:1.2.1"
+androidx-profileinstaller = "androidx.profileinstaller:profileinstaller:1.4.1"
 androidx-webkit = "androidx.webkit:webkit:1.14.0"
 androidx-work-runtime-ktx = "androidx.work:work-runtime-ktx:2.11.0"
 desugarJdkLibs = "com.android.tools:desugar_jdk_libs:2.1.5"
@@ -22,6 +24,11 @@ google-material = "com.google.android.material:material:1.13.0"
 jsr305 = "com.google.code.findbugs:jsr305:3.0.2"
 junit = "junit:junit:4.13.2"
 kotlinx-coroutines-android = "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2"
+librootkotlinx = "be.mygod.librootkotlinx:librootkotlinx:2.0.0-alpha13"
+ktor-io = "io.ktor:ktor-io-jvm:3.5.0"
+okio = "com.squareup.okio:okio:3.10.2"
+timber = "com.jakewharton.timber:timber:5.0.1"
+wire-runtime = { module = "com.squareup.wire:wire-runtime", version.ref = "wire" }
 zxing-android-embedded = "com.journeyapps:zxing-android-embedded:4.3.0"
 
 [plugins]
@@ -29,3 +36,5 @@ android-application = { id = "com.android.application", version.ref = "agp" }
 android-library = { id = "com.android.library", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-kapt = { id = "org.jetbrains.kotlin.kapt", version.ref = "kotlin" }
+kotlin-parcelize = { id = "org.jetbrains.kotlin.plugin.parcelize", version.ref = "kotlin" }
+wire = { id = "com.squareup.wire", version.ref = "wire" }
