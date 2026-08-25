@@ -5,15 +5,28 @@
 package com.wireguard.android.subscription
 
 import android.content.Context
-import android.system.ErrnoException
-import android.system.Os
 import android.util.Log
+import com.wireguard.android.util.SecureFileStore
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
 import java.nio.charset.StandardCharsets
 
 class SubscriptionStore(private val context: Context) {
+    private val secureStore = SecureFileStore(context)
+
+    fun migrateLegacyFiles() {
+        directory.listFiles { file -> file.name.endsWith(SUFFIX) }
+            ?.forEach { file ->
+                try {
+                    val stored = secureStore.read(file)
+                    secureStore.migrateIfNeeded(file, stored)
+                } catch (e: IOException) {
+                    Log.e(TAG, "Unable to migrate protected subscription metadata ${file.name}", e)
+                }
+            }
+    }
+
     data class Record(
         val tunnelName: String,
         val url: String,
@@ -32,8 +45,9 @@ class SubscriptionStore(private val context: Context) {
         val file = fileFor(tunnelName)
         if (!file.isFile) return null
         return try {
-            val json = JSONObject(file.readText(StandardCharsets.UTF_8))
-            Record(
+            val stored = secureStore.read(file)
+            val json = JSONObject(String(stored.bytes, StandardCharsets.UTF_8))
+            val record = Record(
                 tunnelName,
                 json.getString("url"),
                 json.optString("etag").ifBlank { null },
@@ -46,6 +60,8 @@ class SubscriptionStore(private val context: Context) {
                 json.optString("subscriptionName").ifBlank { null },
                 json.optLong("expiresAt", 0).takeIf { it > 0 },
             )
+            secureStore.migrateIfNeeded(file, stored)
+            record
         } catch (e: Throwable) {
             Log.e(TAG, "Unable to read subscription metadata for $tunnelName", e)
             null
@@ -59,7 +75,6 @@ class SubscriptionStore(private val context: Context) {
     fun save(record: Record) {
         directory.mkdirs()
         val target = fileFor(record.tunnelName)
-        val temporary = File(directory, ".${target.name}.tmp")
         val json = JSONObject()
             .put("url", record.url)
             .put("etag", record.etag ?: "")
@@ -71,13 +86,7 @@ class SubscriptionStore(private val context: Context) {
             .put("profileId", record.profileId ?: "")
             .put("subscriptionName", record.subscriptionName ?: "")
             .put("expiresAt", record.expiresAt ?: 0)
-        temporary.writeText(json.toString(), StandardCharsets.UTF_8)
-        try {
-            Os.rename(temporary.path, target.path)
-        } catch (e: ErrnoException) {
-            temporary.delete()
-            throw IOException("Unable to save subscription metadata", e)
-        }
+        secureStore.write(target, json.toString().toByteArray(StandardCharsets.UTF_8))
     }
 
     fun delete(tunnelName: String) {
