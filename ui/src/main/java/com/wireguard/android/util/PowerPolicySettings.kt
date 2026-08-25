@@ -21,7 +21,7 @@ import kotlinx.coroutines.flow.onEach
 object PowerPolicySettings {
     data class Snapshot(
         val backgroundUpdatesEnabled: Boolean = true,
-        val powerSavingEnabled: Boolean = false,
+        val powerSavingEnabled: Boolean = true,
     )
 
     const val BACKGROUND_UPDATES_KEY_NAME = "power_background_updates_enabled"
@@ -52,6 +52,6 @@ object PowerPolicySettings {
 
     internal fun fromPreferences(preferences: Preferences): Snapshot = Snapshot(
         backgroundUpdatesEnabled = preferences[backgroundUpdatesKey] ?: true,
-        powerSavingEnabled = preferences[powerSavingKey] ?: false,
+        powerSavingEnabled = preferences[powerSavingKey] ?: true,
     )
 }

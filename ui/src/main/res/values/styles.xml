@@ -180,16 +180,18 @@
     </style>
 
     <style name="RabbitMaterialAlertDialog" parent="MaterialAlertDialog.Material3">
-        <!-- The stock bottom inset can cover the second row of buttons on large-font Samsung builds. -->
-        <item name="backgroundInsetBottom">0dp</item>
+        <!-- Keep Material's stock window insets: Samsung may otherwise clip a wrapped button row. -->
     </style>
 
     <style name="RabbitDialogButton" parent="Widget.Material3.Button.TextButton.Dialog">
+        <item name="android:minHeight">48dp</item>
         <item name="android:minWidth">0dp</item>
         <item name="android:paddingLeft">10dp</item>
         <item name="android:paddingRight">10dp</item>
         <item name="android:paddingStart">10dp</item>
         <item name="android:paddingEnd">10dp</item>
+        <item name="backgroundTint">@android:color/transparent</item>
+        <item name="strokeWidth">0dp</item>
     </style>
 
     <style name="RabbitQrButton" parent="Widget.Material3.Button.TonalButton.Icon">

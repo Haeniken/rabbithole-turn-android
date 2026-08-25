@@ -14,7 +14,7 @@ class PowerPolicySettingsTest {
     @Test
     fun defaultsKeepBackgroundUpdatesAndNormalMotion() {
         assertEquals(
-            PowerPolicySettings.Snapshot(backgroundUpdatesEnabled = true, powerSavingEnabled = false),
+            PowerPolicySettings.Snapshot(backgroundUpdatesEnabled = true, powerSavingEnabled = true),
             PowerPolicySettings.fromPreferences(emptyPreferences()),
         )
     }

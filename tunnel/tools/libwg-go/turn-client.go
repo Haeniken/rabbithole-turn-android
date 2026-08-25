@@ -193,6 +193,8 @@ const (
 	watchdogUnansweredTxLimit = 3
 	probeInterval             = 30 * time.Second
 	probeStaleThreshold       = 120 * time.Second
+	probeSuspendGapThreshold  = 90 * time.Second
+	probeResumeResponseWindow = 3 * time.Second
 	serverReorderCapability   = 0x80
 	turnUDPSetupTimeout       = 5 * time.Second
 	turnTransportTCPOnly      = 0
@@ -722,11 +724,7 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 		lastTick := time.Now()
 		for {
 			now := time.Now()
-			if gap := now.Sub(lastTick); gap > 90*time.Second {
-				// Android may suspend this goroutine while the device sleeps. That
-				// is not evidence of a dead allocation, so reset the grace clock.
-				s.lastPongAt.Store(now.UnixNano())
-			}
+			resumedAfterSuspend := now.Sub(lastTick) > probeSuspendGapThreshold
 			lastTick = now
 
 			seq := s.lastPingSeq.Add(1)
@@ -745,6 +743,12 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 			probeSentCount.Add(1)
 
 			if serverProbeable.Load() {
+				if resumedAfterSuspend && !waitForProbeEcho(sCtx, &s.lastPongSeq, seq, probeResumeResponseWindow) {
+					probeZombieCount.Add(1)
+					turnLog("[STREAM %d] Resume probe timed out after Android suspend (ping=%d, pong=%d)",
+						s.id, seq, s.lastPongSeq.Load())
+					return
+				}
 				lastPong := time.Unix(0, s.lastPongAt.Load())
 				if stale := time.Since(lastPong); stale > probeStaleThreshold {
 					probeZombieCount.Add(1)
@@ -764,6 +768,28 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 
 	wg.Wait()
 	return nil
+}
+
+func waitForProbeEcho(ctx context.Context, pongSeq *atomic.Uint64, wanted uint64, timeout time.Duration) bool {
+	if pongSeq.Load() >= wanted {
+		return true
+	}
+	timer := time.NewTimer(timeout)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer timer.Stop()
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-timer.C:
+			return pongSeq.Load() >= wanted
+		case <-ticker.C:
+			if pongSeq.Load() >= wanted {
+				return true
+			}
+		}
+	}
 }
 
 func isExpectedStreamShutdown(ctx context.Context, err error) bool {

@@ -29,9 +29,21 @@ enum class SharingType(
         // explicitly reports it as tethered, never through the broadcast-less fallback.
         Regex("^(ap|softap|swlan)[0-9._-]*$", RegexOption.IGNORE_CASE),
     ),
-    USB("sharing_usb", 1, Regex("^(rndis|usb)[0-9._-]*$", RegexOption.IGNORE_CASE)),
-    BLUETOOTH("sharing_bluetooth", 2, Regex("^(bt-pan|bnep)[0-9._-]*$", RegexOption.IGNORE_CASE)),
-    ETHERNET("sharing_ethernet", 5, Regex("^eth[0-9._-]*$", RegexOption.IGNORE_CASE));
+    USB(
+        "sharing_usb",
+        1,
+        Regex("^(rndis|usb|ncm|ecm|gether)[0-9._-]*$", RegexOption.IGNORE_CASE),
+    ),
+    BLUETOOTH(
+        "sharing_bluetooth",
+        2,
+        Regex("^(bt-pan|bnep|btnap|pan)[0-9._-]*$", RegexOption.IGNORE_CASE),
+    ),
+    ETHERNET(
+        "sharing_ethernet",
+        5,
+        Regex("^(eth|usbeth|r_ether)[0-9._-]*$", RegexOption.IGNORE_CASE),
+    );
 
     val preferenceKey = booleanPreferencesKey(preferenceName)
 

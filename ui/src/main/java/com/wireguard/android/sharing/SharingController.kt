@@ -17,6 +17,7 @@ import com.wireguard.android.Application
 import com.wireguard.android.routing.DnsPrivacySettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -49,6 +50,7 @@ object SharingController {
     @Volatile private var rootAvailable: Boolean? = null
     @Volatile private var previousOffloadSetting: String? = null
     @Volatile private var downstreams: List<DownstreamInterface> = emptyList()
+    @Volatile private var interfaceDiscoveryJob: Job? = null
     private val tetheredInterfaces = linkedSetOf<String>()
 
     private val tetherStateReceiver = object : BroadcastReceiver() {
@@ -133,6 +135,7 @@ object SharingController {
                 mode = Mode.WAITING_INTERFACE,
                 proxyPort = settings.proxyPort,
             )
+            scheduleInterfaceDiscovery()
             return
         }
 
@@ -198,6 +201,22 @@ object SharingController {
 
     fun reportProxyError(message: String) {
         mutableStatus.value = mutableStatus.value.copy(mode = Mode.ERROR, error = message)
+    }
+
+    /**
+     * Bluetooth PAN, USB and Ethernet interfaces may appear only after a peer or cable is
+     * connected, without another public tethering broadcast. Poll only while waiting so a
+     * late downstream is discovered without repeatedly rebuilding root firewall rules.
+     */
+    private fun scheduleInterfaceDiscovery() {
+        if (interfaceDiscoveryJob?.isActive == true) return
+        val appScope = scope ?: return
+        interfaceDiscoveryJob = appScope.launch {
+            while (mutableStatus.value.mode == Mode.WAITING_INTERFACE) {
+                delay(INTERFACE_DISCOVERY_INTERVAL_MS)
+                if (mutableStatus.value.mode == Mode.WAITING_INTERFACE) reconcile()
+            }
+        }
     }
 
     private fun ensureRoot(): Boolean {
@@ -342,4 +361,5 @@ object SharingController {
     private const val MSS_CHAIN = "RH_VPN_MSS"
     private const val ROOT_STATE_PREFERENCES = "vpn_sharing_root_state"
     private const val KEY_PREVIOUS_OFFLOAD = "previous_tether_offload_disabled"
+    private const val INTERFACE_DISCOVERY_INTERVAL_MS = 2_000L
 }
