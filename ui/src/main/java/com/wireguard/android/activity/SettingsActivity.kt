@@ -599,9 +599,11 @@ class SettingsActivity : AppCompatActivity() {
             }
             preferenceManager.findPreference<Preference>("sharing_windows_help")?.setOnPreferenceClickListener {
                 val status = SharingController.status.value
-                val gateway = status.gateways.firstOrNull() ?: "PHONE_IP"
+                val gateway = status.gateways.firstOrNull()
                 val port = status.proxyPort
-                val singBoxConfig = """
+                val singBoxConfig = gateway?.let { phoneAddress ->
+                    val routeExcludeAddress = SharingSettings.routeExcludeAddress(phoneAddress)
+                    """
                     {
                       "dns": {
                         "servers": [
@@ -630,14 +632,14 @@ class SettingsActivity : AppCompatActivity() {
                           "mtu": 1280,
                           "auto_route": true,
                           "strict_route": true,
-                          "route_exclude_address": ["$gateway/32"]
+                          "route_exclude_address": ["$routeExcludeAddress"]
                         }
                       ],
                       "outbounds": [
                         {
                           "type": "socks",
                           "tag": "phone",
-                          "server": "$gateway",
+                          "server": "$phoneAddress",
                           "server_port": $port,
                           "version": "5"
                         }
@@ -653,12 +655,17 @@ class SettingsActivity : AppCompatActivity() {
                         "final": "phone"
                       }
                     }
-                """.trimIndent()
-                val dialog = MaterialAlertDialogBuilder(requireContext())
+                    """.trimIndent()
+                }
+                val message = if (gateway == null || singBoxConfig == null) {
+                    getString(R.string.sharing_windows_help_message_pending, port)
+                } else {
+                    getString(R.string.sharing_windows_help_message, gateway, port, singBoxConfig)
+                }
+                val dialogBuilder = MaterialAlertDialogBuilder(requireContext())
                     .setTitle(R.string.sharing_windows_help_title)
-                    .setMessage(getString(R.string.sharing_windows_help_message, gateway, port, singBoxConfig))
+                    .setMessage(message)
                     .setNegativeButton(android.R.string.ok, null)
-                    .setNeutralButton(R.string.sharing_windows_copy_config, null)
                     .setPositiveButton(R.string.sharing_windows_open_sing_box_short) { _, _ ->
                         startActivity(
                             Intent(
@@ -667,20 +674,25 @@ class SettingsActivity : AppCompatActivity() {
                             ),
                         )
                     }
-                    .create()
+                if (singBoxConfig != null) {
+                    dialogBuilder.setNeutralButton(R.string.sharing_windows_copy_config, null)
+                }
+                val dialog = dialogBuilder.create()
                 dialog.setOnShowListener {
                     dialog.findViewById<android.widget.TextView>(android.R.id.message)
                         ?.setTextIsSelectable(true)
-                    dialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-                        requireContext().getSystemService(ClipboardManager::class.java)?.setPrimaryClip(
-                            ClipData.newPlainText(getString(R.string.sharing_windows_config_label), singBoxConfig),
-                        )
-                        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-                            Toast.makeText(
-                                requireContext(),
-                                R.string.sharing_windows_config_copied,
-                                Toast.LENGTH_SHORT,
-                            ).show()
+                    singBoxConfig?.let { config ->
+                        dialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener {
+                            requireContext().getSystemService(ClipboardManager::class.java)?.setPrimaryClip(
+                                ClipData.newPlainText(getString(R.string.sharing_windows_config_label), config),
+                            )
+                            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                                Toast.makeText(
+                                    requireContext(),
+                                    R.string.sharing_windows_config_copied,
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
                         }
                     }
                 }

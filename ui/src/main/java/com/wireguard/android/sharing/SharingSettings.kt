@@ -70,6 +70,11 @@ data class SharingSettings(
                 ?: DEFAULT_PROXY_PORT
             return SharingSettings(types, port)
         }
+
+        internal fun routeExcludeAddress(gateway: String): String {
+            val prefixLength = if (InetAddress.getByName(gateway) is Inet4Address) 32 else 128
+            return "$gateway/$prefixLength"
+        }
     }
 }
 
