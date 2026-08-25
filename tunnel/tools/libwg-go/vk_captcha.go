@@ -176,15 +176,17 @@ func applyBrowserProfileFhttp(req *fhttp.Request, profile Profile) {
 }
 
 func generateBrowserFp(profile Profile) string {
+	if strings.TrimSpace(profile.BrowserFp) != "" {
+		return profile.BrowserFp
+	}
 	data := fmt.Sprintf(
-		"%s%s%dx%dx24@%.3f%s%d",
+		"%s%s%dx%dx24@%.3f%s",
 		profile.UserAgent,
 		profile.SecChUa,
 		profile.ScreenWidth,
 		profile.ScreenHeight,
 		profile.DevicePixelRatio,
 		profile.NavigatorPlatform,
-		time.Now().UnixNano(),
 	)
 	h := md5.Sum([]byte(data))
 	return fmt.Sprintf("%x", h)
@@ -306,10 +308,11 @@ func callCaptchaNotRobot(ctx context.Context, sessionToken, hash string, streamI
 		return resp, nil
 	}
 
-	baseParams := fmt.Sprintf("session_token=%s&domain=vk.com&adFp=&access_token=", neturl.QueryEscape(sessionToken))
+	baseParamsEmptyAdFp := fmt.Sprintf("session_token=%s&domain=vk.com&adFp=&access_token=", neturl.QueryEscape(sessionToken))
+	baseParams := fmt.Sprintf("session_token=%s&domain=vk.com&adFp=%s&access_token=", neturl.QueryEscape(sessionToken), neturl.QueryEscape(profile.AdFp))
 
 	turnLog("[STREAM %d] [Captcha] Step 1/4: settings", streamID)
-	if _, err := vkReq("captchaNotRobot.settings", baseParams); err != nil {
+	if _, err := vkReq("captchaNotRobot.settings", baseParamsEmptyAdFp); err != nil {
 		return "", fmt.Errorf("settings failed: %w", err)
 	}
 

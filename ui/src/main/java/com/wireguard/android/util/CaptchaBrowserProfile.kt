@@ -7,13 +7,16 @@ package com.wireguard.android.util
 import android.app.ActivityManager
 import android.content.Context
 import android.os.Build
+import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
+import java.security.SecureRandom
 import java.util.Locale
 import kotlin.math.roundToInt
 
 /** Browser identity shared by native VK authorization and the CAPTCHA WebView. */
-class CaptchaBrowserProfile private constructor(
+@ConsistentCopyVisibility
+data class CaptchaBrowserProfile private constructor(
     val userAgent: String,
     val secChUa: String,
     val secChUaMobile: String,
@@ -30,6 +33,10 @@ class CaptchaBrowserProfile private constructor(
     val devicePixelRatio: Double,
     val hardwareConcurrency: Int,
     val deviceMemory: Int,
+    val adFp: String,
+    val browserFp: String,
+    val capturedDeviceJson: String,
+    val createdAtEpochSeconds: Long,
 ) {
     fun acceptLanguageHeader(): String = languages.take(3).mapIndexed { index, value ->
         if (index == 0) value else "$value;q=${"%.1f".format(Locale.US, 1.0 - index * 0.1)}"
@@ -52,6 +59,10 @@ class CaptchaBrowserProfile private constructor(
         .put("devicePixelRatio", devicePixelRatio)
         .put("hardwareConcurrency", hardwareConcurrency)
         .put("deviceMemory", deviceMemory)
+        .put("adFp", adFp)
+        .put("browserFp", browserFp)
+        .put("capturedDeviceJson", capturedDeviceJson)
+        .put("createdAtEpochSeconds", createdAtEpochSeconds)
         .toString()
 
     fun navigatorOverridesScript(): String {
@@ -80,6 +91,8 @@ class CaptchaBrowserProfile private constructor(
 
     companion object {
         private const val DEFAULT_CHROME_MAJOR = 146
+        private const val PREFERENCES_NAME = "captcha_browser_profile"
+        private const val PREFERENCE_PROFILE = "stable_profile_v2"
 
         @Volatile
         private var cached: Pair<String, CaptchaBrowserProfile>? = null
@@ -89,7 +102,37 @@ class CaptchaBrowserProfile private constructor(
             cached?.takeIf { it.first == userAgent }?.second?.let { return it }
             return synchronized(this) {
                 cached?.takeIf { it.first == userAgent }?.second
-                    ?: create(context.applicationContext, userAgent).also { cached = userAgent to it }
+                    ?: load(context.applicationContext)
+                        ?.takeIf { it.userAgent == userAgent }
+                        ?.also {
+                            persist(context.applicationContext, it)
+                            cached = userAgent to it
+                        }
+                    ?: create(context.applicationContext, userAgent).also {
+                        persist(context.applicationContext, it)
+                        cached = userAgent to it
+                    }
+            }
+        }
+
+        /** Saves browser-generated values captured during a successful manual session. */
+        fun recordCaptured(context: Context, browserFp: String?, deviceJson: String?, adFp: String?) {
+            synchronized(this) {
+                val current = get(context)
+                val normalizedBrowserFp = browserFp.orEmpty().takeIf { it.length in 16..512 }
+                val normalizedDevice = deviceJson.orEmpty().takeIf {
+                    it.length in 2..16_384 && runCatching { JSONObject(it) }.isSuccess
+                }
+                val normalizedAdFp = adFp.orEmpty().takeIf { it.length in 16..128 }
+                if (normalizedBrowserFp == null && normalizedDevice == null && normalizedAdFp == null) return
+                val updated = current.copy(
+                    browserFp = normalizedBrowserFp ?: current.browserFp,
+                    capturedDeviceJson = normalizedDevice ?: current.capturedDeviceJson,
+                    adFp = normalizedAdFp ?: current.adFp,
+                )
+                if (updated == current) return
+                persist(context.applicationContext, updated)
+                cached = updated.userAgent to updated
             }
         }
 
@@ -136,7 +179,60 @@ class CaptchaBrowserProfile private constructor(
                 devicePixelRatio = density.toDouble(),
                 hardwareConcurrency = Runtime.getRuntime().availableProcessors().coerceAtLeast(1),
                 deviceMemory = getDeviceMemoryBucket(context),
+                adFp = newAdFp(),
+                browserFp = newBrowserFp(),
+                capturedDeviceJson = "",
+                createdAtEpochSeconds = System.currentTimeMillis() / 1000,
             )
+        }
+
+        private fun load(context: Context): CaptchaBrowserProfile? = runCatching {
+            val raw = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+                .getString(PREFERENCE_PROFILE, null) ?: return null
+            val json = JSONObject(raw)
+            val languagesJson = json.getJSONArray("languages")
+            val languages = buildList {
+                for (index in 0 until languagesJson.length()) add(languagesJson.getString(index))
+            }
+            CaptchaBrowserProfile(
+                userAgent = json.getString("userAgent"),
+                secChUa = json.getString("secChUa"),
+                secChUaMobile = json.getString("secChUaMobile"),
+                secChUaPlatform = json.getString("secChUaPlatform"),
+                language = json.getString("language"),
+                languages = languages,
+                navigatorPlatform = json.getString("navigatorPlatform"),
+                screenWidth = json.getInt("screenWidth"),
+                screenHeight = json.getInt("screenHeight"),
+                screenAvailWidth = json.getInt("screenAvailWidth"),
+                screenAvailHeight = json.getInt("screenAvailHeight"),
+                innerWidth = json.getInt("innerWidth"),
+                innerHeight = json.getInt("innerHeight"),
+                devicePixelRatio = json.getDouble("devicePixelRatio"),
+                hardwareConcurrency = json.getInt("hardwareConcurrency"),
+                deviceMemory = json.getInt("deviceMemory"),
+                adFp = json.optString("adFp").takeIf { it.length >= 16 } ?: newAdFp(),
+                browserFp = json.optString("browserFp").takeIf { it.length >= 16 } ?: newBrowserFp(),
+                capturedDeviceJson = json.optString("capturedDeviceJson"),
+                createdAtEpochSeconds = json.optLong("createdAtEpochSeconds", System.currentTimeMillis() / 1000),
+            )
+        }.getOrNull()
+
+        private fun persist(context: Context, profile: CaptchaBrowserProfile) {
+            context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(PREFERENCE_PROFILE, profile.toJson())
+                .apply()
+        }
+
+        private fun newAdFp(): String {
+            val bytes = ByteArray(16).also { SecureRandom().nextBytes(it) }
+            return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP).take(21)
+        }
+
+        private fun newBrowserFp(): String {
+            val bytes = ByteArray(16).also { SecureRandom().nextBytes(it) }
+            return bytes.joinToString("") { "%02x".format(Locale.US, it.toInt() and 0xff) }
         }
 
         private fun getDeviceMemoryBucket(context: Context): Int {
