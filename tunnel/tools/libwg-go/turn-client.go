@@ -54,15 +54,22 @@ func protectControl(network, address string, c syscall.RawConn) error {
 
 func init() {
 	os.Setenv("GODEBUG", "netdns=go")
+	credentialLog = turnLog
 }
 
-//export wgNotifyNetworkChange
-func wgNotifyNetworkChange() {
+func refreshNetworkResources() {
 	// Clear DNS cache
 	ClearCache()
 
 	turnHTTPClient.CloseIdleConnections()
-	turnLog("[NETWORK] Network change notified: HTTP connections cleared, DNS cache cleared")
+	turnLog("[NETWORK] HTTP connections and DNS cache cleared")
+}
+
+//export wgNotifyNetworkChange
+func wgNotifyNetworkChange() {
+	marked := markCredentialPoolsForNetworkChange()
+	refreshNetworkResources()
+	turnLog("[NETWORK] Path change notified: %d active credential slots moved to quota cooldown", marked)
 }
 
 var turnHTTPClient = &http.Client{
@@ -88,11 +95,22 @@ type stream struct {
 	cert            *tls.Certificate
 	watchdogTimeout int
 	wrapKey         []byte
+	getCreds        getCredsFunc
+	readySince      atomic.Int64
+	lastPongAt      atomic.Int64
+	lastPingAt      atomic.Int64
+	lastPingSeq     atomic.Uint64
+	lastPongSeq     atomic.Uint64
+	probeRTT        atomic.Int64
+	txBytes         atomic.Uint64
+	rxBytes         atomic.Uint64
 }
 
 const (
 	iPacketBuffMaxSize        = 2048
 	watchdogUnansweredTxLimit = 3
+	probeInterval             = 30 * time.Second
+	probeStaleThreshold       = 120 * time.Second
 )
 
 var packetPool = sync.Pool{
@@ -109,9 +127,20 @@ var (
 	relayRxErrorCount  atomic.Uint64 // Errors in relay RX
 	noDtlsTxDropCount  atomic.Uint64 // Drops in NoDTLS TX
 	noDtlsRxErrorCount atomic.Uint64 // Errors in NoDTLS RX
+	queueFullDropCount atomic.Uint64 // Local UDP packets dropped on a full stream queue
+	noReadyDropCount   atomic.Uint64 // Local UDP packets received while no stream was healthy
+	queuedPacketCount  atomic.Uint64
+	queuePeak          atomic.Uint64
+	streamReconnects   atomic.Uint64
+	turnQuotaErrors    atomic.Uint64
+	probeSentCount     atomic.Uint64
+	probeRecvCount     atomic.Uint64
+	probeZombieCount   atomic.Uint64
+	serverProbeable    atomic.Bool
 )
 
 func (s *stream) run(link string, peer *net.UDPAddr, udp bool, okchan chan<- struct{}, turnIp string, turnPort int, peerType string) {
+	reconnectAttempt := 0
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -124,13 +153,17 @@ func (s *stream) run(link string, peer *net.UDPAddr, udp bool, okchan chan<- str
 			sCtx, sCancel := context.WithCancel(s.ctx)
 			defer sCancel()
 
-			if globalGetCreds == nil {
+			if s.getCreds == nil {
 				return fmt.Errorf("credentials function not initialized")
 			}
-			user, pass, addr, err := globalGetCreds(sCtx, link, s.id)
+			lease, err := s.getCreds(sCtx, s.id)
 			if err != nil {
 				return fmt.Errorf("TURN creds failed: %w", err)
 			}
+			defer lease.release()
+			user := lease.creds.Username
+			pass := lease.creds.Password
+			addr := lease.creds.ServerAddr
 
 			// Override TURN address if provided
 			if turnIp != "" {
@@ -183,7 +216,7 @@ func (s *stream) run(link string, peer *net.UDPAddr, udp bool, okchan chan<- str
 			if err := client.Listen(); err != nil {
 				// Check if this is an authentication error (stale credentials)
 				if isAuthError(err) {
-					handleAuthError(s.id)
+					lease.recordAuthError()
 				}
 				return fmt.Errorf("TURN listen failed: %w", err)
 			}
@@ -193,7 +226,12 @@ func (s *stream) run(link string, peer *net.UDPAddr, udp bool, okchan chan<- str
 			if err != nil {
 				// Check if this is an authentication error (stale credentials)
 				if isAuthError(err) {
-					handleAuthError(s.id)
+					lease.recordAuthError()
+				}
+				if isAllocationQuotaError(err) {
+					turnQuotaErrors.Add(1)
+					cooldown := lease.markSaturated()
+					turnLog("[STREAM %d] TURN allocation quota reached; credential slot %d cooling down for %v", s.id, lease.slot, cooldown)
 				}
 				return fmt.Errorf("TURN allocation failed: %w", err)
 			}
@@ -213,13 +251,26 @@ func (s *stream) run(link string, peer *net.UDPAddr, udp bool, okchan chan<- str
 		// allocation exits. Keeping it marked ready during reconnect backoff
 		// can otherwise queue packets into a dead transport.
 		s.ready.Store(false)
+		readySince := s.readySince.Swap(0)
 
-		if err != nil && s.ctx.Err() == nil {
-			reconnectDelay := time.Second
+		if s.ctx.Err() == nil {
+			if err == nil {
+				err = errors.New("TURN stream ended")
+			}
+			if readySince > 0 && time.Since(time.Unix(0, readySince)) >= 30*time.Second {
+				reconnectAttempt = 0
+			} else {
+				reconnectAttempt++
+			}
+			streamReconnects.Add(1)
+			reconnectDelay := reconnectBackoff(reconnectAttempt, s.id)
 			if errors.Is(err, errCaptchaWaitRequired) {
 				if remaining := captchaBackoff.remaining(); remaining > reconnectDelay {
 					reconnectDelay = remaining
 				}
+			}
+			if requested := retryAfterFromError(err); requested > reconnectDelay {
+				reconnectDelay = requested
 			}
 			turnLog("[STREAM %d] Error: %v. Reconnecting in %v...", s.id, err, reconnectDelay.Round(time.Second))
 			select {
@@ -251,7 +302,7 @@ func (s *stream) runNoDTLS(ctx context.Context, relayConn net.PacketConn, peer *
 			case <-sCtx.Done():
 				return
 			case b := <-s.in:
-				_, err := relayConn.WriteTo(b, peer)
+				n, err := relayConn.WriteTo(b, peer)
 				packetPool.Put(b[:cap(b)])
 
 				if err != nil {
@@ -259,6 +310,7 @@ func (s *stream) runNoDTLS(ctx context.Context, relayConn net.PacketConn, peer *
 					turnLog("[STREAM %d] TX error: %v", s.id, err)
 					return
 				}
+				s.txBytes.Add(uint64(n))
 			}
 		}
 	}()
@@ -286,11 +338,13 @@ func (s *stream) runNoDTLS(ctx context.Context, relayConn net.PacketConn, peer *
 					turnLog("[STREAM %d] RX write error: %v", s.id, err)
 					return
 				}
+				s.rxBytes.Add(uint64(n))
 			}
 		}
 	}()
 
 	s.ready.Store(true)
+	s.readySince.Store(time.Now().UnixNano())
 	select {
 	case okchan <- struct{}{}:
 	default:
@@ -444,6 +498,7 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 	turnLog("[STREAM %d] DTLS handshake SUCCESS", s.id)
 
 	// Session ID + Stream ID Handshake (17 bytes total) — only for Proxy v2
+	var dtlsWriteMu sync.Mutex
 	if sendHandshake {
 		dtlsConn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		handshakeBuf := make([]byte, 17)
@@ -457,6 +512,9 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 	}
 
 	s.ready.Store(true)
+	now := time.Now()
+	s.readySince.Store(now.UnixNano())
+	s.lastPongAt.Store(now.UnixNano())
 	select {
 	case okchan <- struct{}{}:
 	default:
@@ -466,7 +524,7 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 	lastRx.Store(time.Now().UnixNano())
 	var txSinceLastRx atomic.Int32
 
-	wg.Add(2)
+	wg.Add(3)
 
 	// WireGuard -> DTLS (TX)
 	go func() {
@@ -489,7 +547,9 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 					return
 				}
 
-				_, err := dtlsConn.Write(b)
+				dtlsWriteMu.Lock()
+				n, err := dtlsConn.Write(b)
+				dtlsWriteMu.Unlock()
 				packetPool.Put(b[:cap(b)])
 
 				if err != nil {
@@ -497,6 +557,7 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 					turnLog("[STREAM %d] TX error: %v", s.id, err)
 					return
 				}
+				s.txBytes.Add(uint64(n))
 			}
 		}
 	}()
@@ -518,12 +579,82 @@ func (s *stream) runDTLS(ctx context.Context, relayConn net.PacketConn, peer *ne
 			}
 			lastRx.Store(time.Now().UnixNano())
 			txSinceLastRx.Store(0)
+			if seq, ok := parseProbePacket(buf[:n]); ok {
+				receivedAt := time.Now()
+				s.lastPongAt.Store(receivedAt.UnixNano())
+				s.lastPongSeq.Store(seq)
+				probeRecvCount.Add(1)
+				serverProbeable.Store(true)
+				if seq == s.lastPingSeq.Load() {
+					if sentAt := s.lastPingAt.Load(); sentAt > 0 {
+						s.probeRTT.Store(receivedAt.Sub(time.Unix(0, sentAt)).Nanoseconds())
+					}
+				}
+				continue
+			}
 			if last := s.peer.Load(); last != nil {
 				if _, err := s.out.WriteTo(buf[:n], *last); err != nil {
 					dtlsRxErrorCount.Add(1)
 					turnLog("[STREAM %d] RX write error: %v", s.id, err)
 					return
 				}
+				s.rxBytes.Add(uint64(n))
+			}
+		}
+	}()
+
+	// End-to-end liveness probes use the same 0xff PNG sentinel as the iPhone
+	// implementation. A legacy server forwards it to WireGuard, which drops it;
+	// no stream is judged by probes until at least one echo proves support.
+	go func() {
+		defer wg.Done()
+		defer sCancel()
+		initial := time.NewTimer(2*time.Second + time.Duration(s.id)*150*time.Millisecond)
+		defer initial.Stop()
+		select {
+		case <-sCtx.Done():
+			return
+		case <-initial.C:
+		}
+
+		ticker := time.NewTicker(probeInterval)
+		defer ticker.Stop()
+		lastTick := time.Now()
+		for {
+			now := time.Now()
+			if gap := now.Sub(lastTick); gap > 90*time.Second {
+				// Android may suspend this goroutine while the device sleeps. That
+				// is not evidence of a dead allocation, so reset the grace clock.
+				s.lastPongAt.Store(now.UnixNano())
+			}
+			lastTick = now
+
+			seq := s.lastPingSeq.Add(1)
+			packet := makeProbePacket(seq)
+			s.lastPingAt.Store(now.UnixNano())
+			dtlsWriteMu.Lock()
+			_, err := dtlsConn.Write(packet)
+			dtlsWriteMu.Unlock()
+			if err != nil {
+				turnLog("[STREAM %d] Probe write error: %v", s.id, err)
+				return
+			}
+			probeSentCount.Add(1)
+
+			if serverProbeable.Load() {
+				lastPong := time.Unix(0, s.lastPongAt.Load())
+				if stale := time.Since(lastPong); stale > probeStaleThreshold {
+					probeZombieCount.Add(1)
+					turnLog("[STREAM %d] Probe detected a stale allocation (last echo %v ago, ping=%d, pong=%d)",
+						s.id, stale.Round(time.Second), s.lastPingSeq.Load(), s.lastPongSeq.Load())
+					return
+				}
+			}
+
+			select {
+			case <-sCtx.Done():
+				return
+			case <-ticker.C:
 			}
 		}
 	}()
@@ -536,16 +667,84 @@ func isExpectedStreamShutdown(ctx context.Context, err error) bool {
 	return ctx.Err() != nil || errors.Is(err, net.ErrClosed) || errors.Is(err, io.ErrClosedPipe)
 }
 
+func (s *stream) isHealthy(now time.Time) bool {
+	if !s.ready.Load() {
+		return false
+	}
+	if !serverProbeable.Load() {
+		return true
+	}
+	lastPong := s.lastPongAt.Load()
+	return lastPong > 0 && now.Sub(time.Unix(0, lastPong)) <= probeStaleThreshold
+}
+
+func (s *stream) healthScore() int64 {
+	// Queue residence dominates the score. Probe RTT only breaks ties between
+	// similarly-loaded streams and is capped so a transient spike cannot starve
+	// a still-healthy connection forever.
+	queueCost := int64(len(s.in)) * int64(50*time.Millisecond)
+	rtt := s.probeRTT.Load()
+	if rtt <= 0 {
+		rtt = int64(50 * time.Millisecond)
+	}
+	if rtt > int64(500*time.Millisecond) {
+		rtt = int64(500 * time.Millisecond)
+	}
+	// RTT buckets retain round-robin fairness between paths whose latency is
+	// effectively equivalent; a one-millisecond fluctuation must not funnel the
+	// entire tunnel through a single stream.
+	rttBucket := ((rtt + int64(25*time.Millisecond) - 1) / int64(25*time.Millisecond)) * int64(25*time.Millisecond)
+	return queueCost + rttBucket
+}
+
+func updateAtomicMax(value *atomic.Uint64, candidate uint64) {
+	for current := value.Load(); candidate > current; current = value.Load() {
+		if value.CompareAndSwap(current, candidate) {
+			return
+		}
+	}
+}
+
+func resetTransportMetrics() {
+	for _, counter := range []*atomic.Uint64{
+		&dtlsTxDropCount, &dtlsRxErrorCount, &relayTxErrorCount, &relayRxErrorCount,
+		&noDtlsTxDropCount, &noDtlsRxErrorCount, &queueFullDropCount, &noReadyDropCount,
+		&queuedPacketCount, &queuePeak, &streamReconnects, &turnQuotaErrors,
+		&probeSentCount, &probeRecvCount, &probeZombieCount,
+	} {
+		counter.Store(0)
+	}
+	serverProbeable.Store(false)
+}
+
+func logTransportMetrics(streams []*stream, pool *credentialPool, label string) {
+	ready, queueDepth := 0, 0
+	var txBytes, rxBytes uint64
+	for _, stream := range streams {
+		if stream.ready.Load() {
+			ready++
+		}
+		queueDepth += len(stream.in)
+		txBytes += stream.txBytes.Load()
+		rxBytes += stream.rxBytes.Load()
+	}
+	fresh, active, saturated, total := pool.snapshot()
+	turnLog("[METRICS] %s ready=%d/%d queue=%d peak=%d queued=%d drops(no-ready=%d full=%d tx=%d) bytes(tx=%d rx=%d) reconnects=%d quota486=%d probes=%d/%d zombies=%d probe-capable=%t creds(fresh=%d active=%d saturated=%d total=%d)",
+		label, ready, len(streams), queueDepth, queuePeak.Load(), queuedPacketCount.Load(),
+		noReadyDropCount.Load(), queueFullDropCount.Load(), dtlsTxDropCount.Load()+noDtlsTxDropCount.Load(),
+		txBytes, rxBytes, streamReconnects.Load(), turnQuotaErrors.Load(), probeRecvCount.Load(), probeSentCount.Load(),
+		probeZombieCount.Load(), serverProbeable.Load(), fresh, active, saturated, total)
+}
+
 var currentTurnCancel context.CancelFunc
 var turnMutex sync.Mutex
 
-// Global credentials function for mode selection (set by wgTurnProxyStart)
-var globalGetCreds getCredsFunc
-
 //export wgTurnProxyStart
 func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n C.int, udp C.int, listenAddrC *C.char, turnIpC *C.char, turnPortC C.int, peerTypeC *C.char, streamsPerCredC C.int, watchdogTimeoutC C.int, useWrapC C.int, wrapKeyHexC *C.char, captchaProfileJSONC *C.char, networkHandleC C.longlong) int32 {
-	// Force initialization of resolver and HTTP client with current environment
-	wgNotifyNetworkChange()
+	// Refresh process-local networking without treating an ordinary start as a
+	// physical path change. Only the explicit JNI notification marks active TURN
+	// credential slots as potentially quota-saturated.
+	refreshNetworkResources()
 
 	// Initialize system DNS from the current network (fallback to predefined Yandex/Google)
 	if networkHandleC != 0 {
@@ -565,9 +764,9 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n C.int
 	turnPort := int(turnPortC)
 	peerType := C.GoString(peerTypeC)
 	requestedStreamsPerCred := int(streamsPerCredC)
-	streamsPerCred = normalizeStreamsPerCred(requestedStreamsPerCred)
-	if streamsPerCred != requestedStreamsPerCred {
-		turnLog("[PROXY] StreamsPerCred adjusted from %d to %d to stay within the TURN allocation quota", requestedStreamsPerCred, streamsPerCred)
+	streamsPerCredential := normalizeStreamsPerCred(requestedStreamsPerCred)
+	if streamsPerCredential != requestedStreamsPerCred {
+		turnLog("[PROXY] StreamsPerCred adjusted from %d to %d to stay within the TURN allocation quota", requestedStreamsPerCred, streamsPerCredential)
 	}
 	watchdogTimeout := int(watchdogTimeoutC)
 	useWrap := int(useWrapC) != 0
@@ -589,7 +788,7 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n C.int
 		turnLog("[PROXY] WRAP mode enabled")
 	}
 
-	turnLog("[PROXY] Hub starting on %s (streams=%d, mode=%s, peerType=%s, streamsPerCred=%d, watchdogTimeout=%d, wrap=%t, networkHandle=%d)", listenAddr, int(n), mode, peerType, streamsPerCred, watchdogTimeout, useWrap, networkHandle)
+	turnLog("[PROXY] Hub starting on %s (streams=%d, mode=%s, peerType=%s, streamsPerCred=%d, watchdogTimeout=%d, wrap=%t, networkHandle=%d)", listenAddr, int(n), mode, peerType, streamsPerCredential, watchdogTimeout, useWrap, networkHandle)
 	turnMutex.Lock()
 	if currentTurnCancel != nil {
 		currentTurnCancel()
@@ -597,24 +796,6 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n C.int
 	ctx, cancel := context.WithCancel(context.Background())
 	currentTurnCancel = cancel
 	turnMutex.Unlock()
-
-	// Setup credentials function based on mode
-	if mode == "wb" {
-		turnLog("[PROXY] Using WB credential mode")
-		globalGetCreds = func(ctx context.Context, link string, streamID int) (string, string, string, error) {
-			return getCredsCached(ctx, link, streamID, wbFetch)
-		}
-	} else {
-		turnLog("[PROXY] Using VK Link credential mode")
-		parts := strings.Split(vklink, "join/")
-		link := parts[len(parts)-1]
-		if idx := strings.IndexAny(link, "/?#"); idx != -1 {
-			link = link[:idx]
-		}
-		globalGetCreds = func(ctx context.Context, lk string, streamID int) (string, string, string, error) {
-			return getCredsCached(ctx, lk, streamID, fetchVkCreds)
-		}
-	}
 
 	// Resolve peerAddr via cascading DNS (if it's a domain)
 	var peer *net.UDPAddr
@@ -661,6 +842,19 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n C.int
 			link = link[:idx]
 		}
 	}
+	var fetcher fetchFunc
+	if mode == "wb" {
+		turnLog("[PROXY] Using WB credential mode")
+		fetcher = wbFetch
+	} else {
+		turnLog("[PROXY] Using VK Link credential mode")
+		fetcher = fetchVkCreds
+	}
+	poolKey := fmt.Sprintf("%s|%s|%d|%d", mode, link, int(n), streamsPerCredential)
+	credPool := getCredentialPool(poolKey, link, int(n), streamsPerCredential, fetcher)
+	getCreds := func(ctx context.Context, streamID int) (*credentialLease, error) {
+		return credPool.acquire(ctx, streamID)
+	}
 
 	lc, err := net.ListenPacket("udp", listenAddr)
 	if err != nil {
@@ -681,10 +875,22 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n C.int
 
 	ok := make(chan struct{}, int(n))
 	streams := make([]*stream, int(n))
+	resetTransportMetrics()
 	for i := 0; i < int(n); i++ {
-		streams[i] = &stream{ctx: ctx, id: i, in: make(chan []byte, 512), out: lc, sessionID: sessionID, cert: &cert, watchdogTimeout: watchdogTimeout, wrapKey: wrapKey}
-		go streams[i].run(link, peer, udp != 0, ok, turnIp, turnPort, peerType)
-		time.Sleep(200 * time.Millisecond)
+		streams[i] = &stream{ctx: ctx, id: i, in: make(chan []byte, 512), out: lc, sessionID: sessionID, cert: &cert, watchdogTimeout: watchdogTimeout, wrapKey: wrapKey, getCreds: getCreds}
+	}
+	for i := range streams {
+		stream := streams[i]
+		go func(delay time.Duration) {
+			timer := time.NewTimer(delay)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
+				stream.run(link, peer, udp != 0, ok, turnIp, turnPort, peerType)
+			}
+		}(time.Duration(i) * 200 * time.Millisecond)
 	}
 
 	// Readiness changes independently from local WireGuard traffic. Monitor it
@@ -692,7 +898,9 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n C.int
 	// the tunnel is idle.
 	go func() {
 		ticker := time.NewTicker(time.Second)
+		metricsTicker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
+		defer metricsTicker.Stop()
 		lastReady := -1
 		for {
 			ready := 0
@@ -707,8 +915,11 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n C.int
 			}
 			select {
 			case <-ctx.Done():
+				logTransportMetrics(streams, credPool, "final")
 				return
 			case <-ticker.C:
+			case <-metricsTicker.C:
+				logTransportMetrics(streams, credPool, "periodic")
 			}
 		}
 	}()
@@ -730,25 +941,31 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n C.int
 			// Rotating over all configured slots skews traffic when only a sparse
 			// subset is ready (the next ready slot receives several turns).
 			readyStreams = readyStreams[:0]
+			now := time.Now()
 			for _, candidate := range streams {
-				if candidate.ready.Load() {
+				if candidate.isHealthy(now) {
 					readyStreams = append(readyStreams, candidate)
 				}
 			}
 
 			if len(readyStreams) == 0 {
+				noReadyDropCount.Add(1)
 				packetPool.Put(b[:cap(b)])
 				continue
 			}
-			s, _ := nextRoundRobin(readyStreams, &nextStream)
+			s, _ := nextLowestScore(readyStreams, &nextStream, func(candidate *stream) int64 {
+				return candidate.healthScore()
+			})
 
 			returnAddr := addr
 			s.peer.Store(&returnAddr)
 
 			select {
 			case s.in <- b[:nRead]:
-				// Packet queued successfully
+				queuedPacketCount.Add(1)
+				updateAtomicMax(&queuePeak, uint64(len(s.in)))
 			default:
+				queueFullDropCount.Add(1)
 				packetPool.Put(b[:cap(b)])
 			}
 		}
