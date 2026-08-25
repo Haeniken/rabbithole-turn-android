@@ -1,5 +1,18 @@
 # Rabbit Hole
 
+> [!CAUTION]
+> **This project is intended for research, testing, and administration of authorized infrastructure.** Use it only with networks, systems, accounts, and traffic that you own or for which the owner has granted explicit prior permission.
+
+## Lawful use, limitations, and responsibility
+
+This is general-purpose software. It is not intended for unauthorized access to computer information, interference with third-party systems, interception or modification of third-party traffic, use of third-party credentials, or access to resources without a lawful basis. Do not use it to distribute prohibited information or provide services to third parties without the required rights, permissions, and regulatory compliance.
+
+Before using, modifying, or distributing the project, users must independently verify that their specific scenario is lawful, properly authorized, and compliant with applicable law, infrastructure owners' rights, and third-party platform terms. If the legal basis or scope of authorization is unclear, stop using the software until qualified legal advice is obtained.
+
+To the extent permitted by applicable law, the software is provided “as is,” without warranties of fitness for a particular purpose, uninterrupted operation, or data preservation. Nothing in this section excludes or limits liability where such exclusion or limitation is prohibited by law.
+
+The project cannot guarantee availability of external APIs, successful CAPTCHA processing, or compatibility with future third-party service changes.
+
 [Русский](README.md)
 
 An Android secure-tunnel client based on WireGuard, with TURN/DTLS transport, subscriptions, managed routing, and application updates delivered through GitHub Releases.
@@ -9,10 +22,19 @@ The project is developed as a separate application with package name `com.rabbit
 ## Features
 
 - WireGuard tunnels over multiple parallel TURN/DTLS streams;
+- an adaptive stream pool that starts at full capacity, returns to four streams
+  after prolonged inactivity, and grows gradually when traffic resumes;
+- stream selection informed by queue pressure, RTT, loss, and temporary error penalties;
+- bounded WireGuard packet reordering and stable packet stripes without changing
+  the WireGuard packet format;
+- make-before-break handover between Wi-Fi and cellular networks;
 - `proxy_v2`, `proxy_v1`, and direct TURN relay transport modes;
+- optional TURN/UDP with automatic TURN/TCP fallback; compatible TURN/TCP remains
+  the default;
 - optional WRAP payload protection;
 - TURN credential acquisition from a call link;
-- automatic CAPTCHA handling with a system notification for manual verification;
+- automatic CAPTCHA handling with a persistent browser profile and a system
+  notification for manual verification;
 - per-user configuration subscriptions, refreshed every 12 hours or manually;
 - service-side subscription and connection-key revocation;
 - managed direct routing for Russian networks and domains when explicitly requested by a profile;
@@ -20,6 +42,8 @@ The project is developed as a separate application with package name `com.rabbit
 - profiles that require direct routing do not start if their geodata is absent or invalid;
 - connection latency checks;
 - grouped application, tunnel, TURN/CAPTCHA, subscription, and routing logs;
+- opt-in detailed diagnostics for queues, socket writes, packet loss and
+  reordering, and the selected TURN transport;
 - update checks at application startup and on demand in Settings;
 - signed APK downloads from GitHub Releases with SHA-256 and Android certificate verification.
 
@@ -101,12 +125,6 @@ Never commit a private signing key or its passwords.
 ```bash
 ./gradlew :ui:testDebugUnitTest :tunnel:testDebugUnitTest :ui:lintDebug :ui:assembleRelease
 ```
-
-## Limitations and responsibility
-
-Use TURN transport only with infrastructure that you or the service operator are authorized to access. Follow the terms of the involved platforms and the laws applicable in your jurisdiction.
-
-The project cannot guarantee availability of external APIs, successful CAPTCHA processing, or compatibility with future third-party service changes.
 
 ## This project is based on
 

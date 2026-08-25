@@ -87,11 +87,15 @@ func newCaptchaNotRobotSession(
 	}
 }
 
-func (s *captchaNotRobotSession) baseValues() neturl.Values {
+func (s *captchaNotRobotSession) baseValues(includeAdFp bool) neturl.Values {
 	values := neturl.Values{}
 	values.Set("session_token", s.sessionToken)
 	values.Set("domain", "vk.com")
-	values.Set("adFp", "")
+	if includeAdFp {
+		values.Set("adFp", s.profile.AdFp)
+	} else {
+		values.Set("adFp", "")
+	}
 	values.Set("access_token", "")
 	return values
 }
@@ -133,7 +137,7 @@ func (s *captchaNotRobotSession) request(method string, values neturl.Values) (m
 }
 
 func (s *captchaNotRobotSession) requestSettings() (*captchaSettingsResponse, error) {
-	resp, err := s.request("captchaNotRobot.settings", s.baseValues())
+	resp, err := s.request("captchaNotRobot.settings", s.baseValues(false))
 	if err != nil {
 		return nil, fmt.Errorf("settings failed: %w", err)
 	}
@@ -141,7 +145,7 @@ func (s *captchaNotRobotSession) requestSettings() (*captchaSettingsResponse, er
 }
 
 func (s *captchaNotRobotSession) requestComponentDone() error {
-	values := s.baseValues()
+	values := s.baseValues(true)
 	values.Set("browser_fp", s.browserFp)
 	values.Set("device", buildCaptchaDeviceJSON(s.profile))
 
@@ -165,7 +169,7 @@ func (s *captchaNotRobotSession) requestCheckboxCheck() (*captchaCheckResult, er
 }
 
 func (s *captchaNotRobotSession) requestSliderContent(sliderSettings string) (*sliderCaptchaContent, error) {
-	values := s.baseValues()
+	values := s.baseValues(true)
 	if sliderSettings != "" {
 		values.Set("captcha_settings", sliderSettings)
 	}
@@ -187,7 +191,7 @@ func (s *captchaNotRobotSession) requestSliderCheck(activeSteps []int, candidate
 }
 
 func (s *captchaNotRobotSession) requestCheck(cursor string, answer string) (*captchaCheckResult, error) {
-	values := s.baseValues()
+	values := s.baseValues(true)
 	values.Set("accelerometer", "[]")
 	values.Set("gyroscope", "[]")
 	values.Set("motion", "[]")
@@ -209,7 +213,7 @@ func (s *captchaNotRobotSession) requestCheck(cursor string, answer string) (*ca
 
 func (s *captchaNotRobotSession) requestEndSession() {
 	log.Printf("[STREAM %d] [Captcha] Step 4/4: endSession", s.streamID)
-	if _, err := s.request("captchaNotRobot.endSession", s.baseValues()); err != nil {
+	if _, err := s.request("captchaNotRobot.endSession", s.baseValues(true)); err != nil {
 		log.Printf("[STREAM %d] [Captcha] Warning: endSession failed: %v", s.streamID, err)
 	}
 }
@@ -325,6 +329,9 @@ func callCaptchaNotRobotWithSliderPOC(
 }
 
 func buildCaptchaDeviceJSON(profile Profile) string {
+	if profile.CapturedDeviceJSON != "" && json.Valid([]byte(profile.CapturedDeviceJSON)) {
+		return profile.CapturedDeviceJSON
+	}
 	device := struct {
 		ScreenWidth             int      `json:"screenWidth"`
 		ScreenHeight            int      `json:"screenHeight"`

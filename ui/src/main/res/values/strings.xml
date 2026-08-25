@@ -205,6 +205,12 @@
     <string name="log_saver_activity_label">Save log</string>
     <string name="log_viewer_pref_summary">Logs may assist with debugging</string>
     <string name="log_viewer_pref_title">View application log</string>
+    <string name="detailed_diagnostics_title">Detailed diagnostics</string>
+    <string name="detailed_diagnostics_summary_off">Extended TURN transport metrics are disabled</string>
+    <string name="detailed_diagnostics_summary_on">Record TURN queues, socket timing and packet reordering</string>
+    <string name="optional_turn_udp_title">Optional TURN/UDP</string>
+    <string name="optional_turn_udp_summary_off">Use the stable TURN/TCP transport</string>
+    <string name="optional_turn_udp_summary_on">Try TURN/UDP first and automatically fall back to TURN/TCP</string>
     <string name="log_viewer_title">Logs</string>
     <string name="log_overview_title">Diagnostic stream</string>
     <string name="log_live_status">● Live updates</string>
@@ -412,7 +418,7 @@
     <string name="turn_streams_hint">1-16 (default 4)</string>
     <string name="turn_local_port">Local port</string>
     <string name="turn_local_port_hint">1024-65535 (default 9000)</string>
-    <string name="turn_use_udp">Use UDP</string>
+    <string name="turn_use_udp">Prefer UDP (TCP fallback)</string>
     <string name="turn_advanced">Advanced settings</string>
     <string name="turn_ip">Turn IP</string>
     <string name="turn_ip_hint">(auto)</string>

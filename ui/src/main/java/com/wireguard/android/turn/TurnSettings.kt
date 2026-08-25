@@ -151,7 +151,6 @@ data class TurnSettings(
                 require(settings.watchdogTimeout >= 5) { "Watchdog timeout must be at least 5 seconds or 0 to disable" }
             }
             if (settings.useWrap) {
-                require(!settings.useUdp) { "WRAP requires DTLS/TCP mode; disable UDP" }
                 require(settings.peerType != "wireguard") { "WRAP requires proxy_v1 or proxy_v2" }
                 require(settings.wrapKeyHex.matches(Regex("^[0-9a-fA-F]{64}$"))) { "WRAP key must be 64 hex characters" }
             }

@@ -1,9 +1,13 @@
 package main
 
 import (
+	cryptorand "crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"math/rand"
 	"strings"
+	"sync"
 	"sync/atomic"
 )
 
@@ -24,9 +28,16 @@ type Profile struct {
 	DevicePixelRatio    float64  `json:"devicePixelRatio"`
 	HardwareConcurrency int      `json:"hardwareConcurrency"`
 	DeviceMemory        int      `json:"deviceMemory"`
+	AdFp                string   `json:"adFp"`
+	BrowserFp           string   `json:"browserFp"`
+	CapturedDeviceJSON  string   `json:"capturedDeviceJson"`
+	CreatedAt           int64    `json:"createdAtEpochSeconds"`
 }
 
 var activeCaptchaProfile atomic.Value
+var stableCaptchaIDsOnce sync.Once
+var stableCaptchaAdFp string
+var stableCaptchaBrowserFp string
 
 func init() {
 	activeCaptchaProfile.Store(defaultAndroidCaptchaProfile())
@@ -102,6 +113,25 @@ func normalizeCaptchaProfile(value Profile) Profile {
 	}
 	if value.DeviceMemory <= 0 {
 		value.DeviceMemory = fallback.DeviceMemory
+	}
+	stableCaptchaIDsOnce.Do(func() {
+		bytes := make([]byte, 16)
+		_, _ = cryptorand.Read(bytes)
+		stableCaptchaAdFp = base64.RawURLEncoding.EncodeToString(bytes)
+		if len(stableCaptchaAdFp) > 21 {
+			stableCaptchaAdFp = stableCaptchaAdFp[:21]
+		}
+		_, _ = cryptorand.Read(bytes)
+		stableCaptchaBrowserFp = hex.EncodeToString(bytes)
+	})
+	if strings.TrimSpace(value.AdFp) == "" {
+		value.AdFp = stableCaptchaAdFp
+	}
+	if strings.TrimSpace(value.BrowserFp) == "" {
+		value.BrowserFp = stableCaptchaBrowserFp
+	}
+	if value.CapturedDeviceJSON != "" && !json.Valid([]byte(value.CapturedDeviceJSON)) {
+		value.CapturedDeviceJSON = ""
 	}
 	return value
 }

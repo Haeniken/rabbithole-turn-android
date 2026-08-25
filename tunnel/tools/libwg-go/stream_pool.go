@@ -51,6 +51,44 @@ func nextLowestScore[T any](items []T, cursor *uint64, score func(T) int64) (T, 
 	return zero, false
 }
 
+// nextWithinScoreBand rotates across every candidate close enough to the best
+// score. A small, short-lived score change therefore cannot collapse all
+// traffic onto one allocation.
+func nextWithinScoreBand[T any](items []T, cursor *uint64, band int64, score func(T) int64) (T, bool) {
+	var zero T
+	if len(items) == 0 {
+		return zero, false
+	}
+	best := score(items[0])
+	for i := 1; i < len(items); i++ {
+		value := score(items[i])
+		if value < best {
+			best = value
+		}
+	}
+	eligible := 0
+	for _, item := range items {
+		if score(item) <= best+band {
+			eligible++
+		}
+	}
+	if eligible == 0 {
+		return zero, false
+	}
+	wanted := int(*cursor % uint64(eligible))
+	(*cursor)++
+	for _, item := range items {
+		if score(item) > best+band {
+			continue
+		}
+		if wanted == 0 {
+			return item, true
+		}
+		wanted--
+	}
+	return zero, false
+}
+
 func reconnectBackoff(attempt, streamID int) time.Duration {
 	if attempt < 1 {
 		attempt = 1

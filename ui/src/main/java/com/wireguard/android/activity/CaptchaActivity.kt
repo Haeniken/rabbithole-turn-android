@@ -173,6 +173,12 @@ class CaptchaActivity : AppCompatActivity() {
             if (successToken.isEmpty()) return
             runOnUiThread { deliverResult(successToken) }
         }
+
+        @JavascriptInterface
+        fun onProfile(browserFp: String?, deviceJson: String?, adFp: String?) {
+            CaptchaBrowserProfile.recordCaptured(this@CaptchaActivity, browserFp, deviceJson, adFp)
+            Log.d(TAG, "Persisted CAPTCHA browser fingerprint captured from WebView")
+        }
     }
 
     private fun bindToPhysicalNetwork() {
@@ -269,6 +275,19 @@ class CaptchaActivity : AppCompatActivity() {
                     } catch (_) {}
                 }
 
+                function captureProfile(body) {
+                    try {
+                        if (typeof body !== 'string' || body.length === 0) return;
+                        var params = new URLSearchParams(body);
+                        var browserFp = params.get('browser_fp');
+                        var device = params.get('device');
+                        var adFp = params.get('adFp');
+                        if (browserFp || device || adFp) {
+                            AndroidCaptcha.onProfile(browserFp || '', device || '', adFp || '');
+                        }
+                    } catch (_) {}
+                }
+
                 var originalOpen = XMLHttpRequest.prototype.open;
                 var originalSend = XMLHttpRequest.prototype.send;
                 XMLHttpRequest.prototype.open = function() {
@@ -277,6 +296,7 @@ class CaptchaActivity : AppCompatActivity() {
                 };
                 XMLHttpRequest.prototype.send = function() {
                     var xhr = this;
+                    captureProfile(arguments[0]);
                     xhr.addEventListener('load', function() {
                         try { report(xhr.responseType === 'json' ? xhr.response : xhr.responseText); } catch (_) {}
                     });
@@ -286,6 +306,7 @@ class CaptchaActivity : AppCompatActivity() {
                 var originalFetch = window.fetch;
                 if (originalFetch) {
                     window.fetch = function() {
+                        try { captureProfile(arguments[1] && arguments[1].body); } catch (_) {}
                         var promise = originalFetch.apply(this, arguments);
                         promise.then(function(response) {
                             response.clone().text().then(report).catch(function() {});

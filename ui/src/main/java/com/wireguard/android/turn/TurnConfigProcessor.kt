@@ -4,6 +4,7 @@
  */
 package com.wireguard.android.turn
 
+import android.util.Log
 import com.wireguard.config.Config
 import com.wireguard.config.Peer
 import java.util.ArrayList
@@ -12,6 +13,13 @@ import java.util.ArrayList
  * Utility for processing WireGuard configurations to inject, extract, and modify TURN settings.
  */
 object TurnConfigProcessor {
+
+    private const val TAG = "WireGuard/TurnConfig"
+    // On the measured cellular path TCP_MAXSEG is 1388. With this inner MTU,
+    // one maximum-size packet occupies exactly one TCP segment after the
+    // WireGuard (32), DTLS 1.2 CID/GCM (46), WRAP (40), and padded TURN
+    // ChannelData framing. MTU 1280 produced a 16-byte second segment.
+    private const val TURN_MTU = 1264
 
     /**
      * Injects TURN settings into the first peer of the configuration as special comments.
@@ -81,8 +89,11 @@ object TurnConfigProcessor {
 
         try {
             ifaceBuilder.setListenPort(iface.listenPort.orElse(0))
-            // Force MTU to 1280 for TURN proxy to handle encapsulation overhead
-            ifaceBuilder.setMtu(1280)
+            // Force a conservative MTU for TURN encapsulation. Keep the value
+            // visible in exported diagnostics so phone-side A/B tests can be
+            // attributed to the actual tunnel MTU rather than the source config.
+            ifaceBuilder.setMtu(TURN_MTU)
+            Log.i(TAG, "TURN tunnel MTU=$TURN_MTU")
         } catch (e: Exception) {
             // Should not happen with valid port/mtu
         }

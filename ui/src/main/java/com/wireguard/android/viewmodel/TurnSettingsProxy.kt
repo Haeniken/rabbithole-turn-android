@@ -211,7 +211,7 @@ class TurnSettingsProxy : BaseObservable, Parcelable {
                 throw BadConfigException(BadConfigException.Section.INTERFACE, BadConfigException.Location.TOP_LEVEL, BadConfigException.Reason.INVALID_VALUE, streamsPerCred)
             }
             if (useWrap) {
-                if (useUdp || peerType == "wireguard" || !wrapKeyHex.matches(Regex("^[0-9a-fA-F]{64}$"))) {
+                if (peerType == "wireguard" || !wrapKeyHex.matches(Regex("^[0-9a-fA-F]{64}$"))) {
                     throw BadConfigException(BadConfigException.Section.INTERFACE, BadConfigException.Location.TOP_LEVEL, BadConfigException.Reason.INVALID_VALUE, wrapKeyHex)
                 }
             }

@@ -16,7 +16,8 @@ extern int wgGetSocketV4(int handle);
 extern int wgGetSocketV6(int handle);
 extern char *wgGetConfig(int handle);
 extern char *wgVersion();
-extern int wgTurnProxyStart(const char *peer_addr, const char *vklink, const char *mode, int n, int udp, const char *listen_addr, const char *turn_ip, int turn_port, const char *peer_type, int streams_per_cred, int watchdog_timeout, int use_wrap, const char *wrap_key_hex, const char *captcha_profile_json, long long network_handle);
+extern int wgTurnProxyStart(const char *peer_addr, const char *vklink, const char *mode, int n, int udp, const char *listen_addr, const char *turn_ip, int turn_port, const char *peer_type, int streams_per_cred, int watchdog_timeout, int use_wrap, const char *wrap_key_hex, const char *captcha_profile_json, int detailed_diagnostics, long long network_handle);
+extern int wgTurnProxyHandover(long long network_handle);
 extern void wgTurnProxyStop();
 extern void wgNotifyNetworkChange();
 extern const char* getNetworkDnsServers(long long network_handle);
@@ -229,6 +230,58 @@ int wgProtectSocket(int fd)
 	return ret;
 }
 
+// Protect and bind a stream to the network generation that created it. Looking
+// up the Network by handle avoids the single mutable global used by legacy
+// starts, so old and new pools can coexist during make-before-break handover.
+int wgProtectSocketForNetwork(int fd, long long network_handle)
+{
+	JNIEnv *env;
+	int attached = 0;
+	if (fd < 0 || !vpn_service_global || !protect_method)
+		return -1;
+	if ((*java_vm)->GetEnv(java_vm, (void **)&env, JNI_VERSION_1_6) == JNI_EDETACHED) {
+		if ((*java_vm)->AttachCurrentThread(java_vm, &env, NULL) != 0)
+			return -1;
+		attached = 1;
+	}
+	int ret = -1;
+	if (!(*env)->CallBooleanMethod(env, vpn_service_global, protect_method, (jint)fd))
+		goto cleanup;
+	if (network_handle == 0 || !connectivity_manager_instance_global || !get_all_networks_method || !get_network_handle_method || !bind_socket_method) {
+		ret = 0;
+		goto cleanup;
+	}
+	jobjectArray networks = (jobjectArray)(*env)->CallObjectMethod(env, connectivity_manager_instance_global, get_all_networks_method);
+	if (!networks)
+		goto cleanup;
+	jsize len = (*env)->GetArrayLength(env, networks);
+	for (jsize i = 0; i < len; i++) {
+		jobject network_obj = (*env)->GetObjectArrayElement(env, networks, i);
+		jlong handle = (*env)->CallLongMethod(env, network_obj, get_network_handle_method);
+		if (handle == network_handle) {
+			jobject fd_obj = (*env)->NewObject(env, file_descriptor_class_global, file_descriptor_init);
+			(*env)->SetIntField(env, fd_obj, file_descriptor_descriptor, fd);
+			(*env)->CallVoidMethod(env, network_obj, bind_socket_method, fd_obj);
+			(*env)->DeleteLocalRef(env, fd_obj);
+			if (!(*env)->ExceptionCheck(env))
+				ret = 0;
+			(*env)->DeleteLocalRef(env, network_obj);
+			break;
+		}
+		(*env)->DeleteLocalRef(env, network_obj);
+	}
+	(*env)->DeleteLocalRef(env, networks);
+
+cleanup:
+	if ((*env)->ExceptionCheck(env))
+		(*env)->ExceptionClear(env);
+	if (ret != 0)
+		__android_log_print(ANDROID_LOG_ERROR, "WireGuard/JNI", "wgProtectSocketForNetwork(fd=%d, handle=%lld) failed", fd, network_handle);
+	if (attached)
+		(*java_vm)->DetachCurrentThread(java_vm);
+	return ret;
+}
+
 JNIEXPORT jint JNICALL Java_com_wireguard_android_backend_GoBackend_wgTurnOn(JNIEnv *env, jclass c, jstring ifname, jint tun_fd, jstring settings)
 {
 	const char *ifname_jni = (*env)->GetStringUTFChars(env, ifname, 0);
@@ -292,7 +345,7 @@ JNIEXPORT jstring JNICALL Java_com_wireguard_android_backend_GoBackend_wgVersion
 	return ret;
 }
 
-JNIEXPORT jint JNICALL Java_com_wireguard_android_backend_TurnBackend_wgTurnProxyStart(JNIEnv *env, jclass c, jstring peer_addr, jstring vklink, jstring mode, jint n, jint useUdp, jstring listen_addr, jstring turn_ip, jint turn_port, jstring peer_type, jint streams_per_cred, jint watchdog_timeout, jint use_wrap, jstring wrap_key_hex, jstring captcha_profile_json, jlong network_handle)
+JNIEXPORT jint JNICALL Java_com_wireguard_android_backend_TurnBackend_wgTurnProxyStart(JNIEnv *env, jclass c, jstring peer_addr, jstring vklink, jstring mode, jint n, jint useUdp, jstring listen_addr, jstring turn_ip, jint turn_port, jstring peer_type, jint streams_per_cred, jint watchdog_timeout, jint use_wrap, jstring wrap_key_hex, jstring captcha_profile_json, jint detailed_diagnostics, jlong network_handle)
 {
 	const char *peer_addr_jni = (*env)->GetStringUTFChars(env, peer_addr, 0);
 	const char *vklink_jni = (*env)->GetStringUTFChars(env, vklink, 0);
@@ -315,7 +368,7 @@ JNIEXPORT jint JNICALL Java_com_wireguard_android_backend_TurnBackend_wgTurnProx
 
 	update_current_network(env, network_handle);
 
-	int ret = wgTurnProxyStart(peer_addr_str, vklink_str, mode_str, (int)n, (int)useUdp, listen_addr_str, turn_ip_str, (int)turn_port, peer_type_str, (int)streams_per_cred, (int)watchdog_timeout, (int)use_wrap, wrap_key_hex_str, captcha_profile_json_str, (long long)network_handle);
+	int ret = wgTurnProxyStart(peer_addr_str, vklink_str, mode_str, (int)n, (int)useUdp, listen_addr_str, turn_ip_str, (int)turn_port, peer_type_str, (int)streams_per_cred, (int)watchdog_timeout, (int)use_wrap, wrap_key_hex_str, captcha_profile_json_str, (int)detailed_diagnostics, (long long)network_handle);
 
 	(*env)->ReleaseStringUTFChars(env, peer_addr, peer_addr_jni);
 	(*env)->ReleaseStringUTFChars(env, vklink, vklink_jni);
@@ -341,6 +394,12 @@ JNIEXPORT jint JNICALL Java_com_wireguard_android_backend_TurnBackend_wgTurnProx
 JNIEXPORT void JNICALL Java_com_wireguard_android_backend_TurnBackend_wgNotifyNetworkChange(JNIEnv *env, jclass c)
 {
 	wgNotifyNetworkChange();
+}
+
+JNIEXPORT jint JNICALL Java_com_wireguard_android_backend_TurnBackend_wgTurnProxyHandover(JNIEnv *env, jclass c, jlong network_handle)
+{
+	update_current_network(env, network_handle);
+	return wgTurnProxyHandover((long long)network_handle);
 }
 
 JNIEXPORT jstring JNICALL Java_com_wireguard_android_backend_TurnBackend_wgGetNetworkDnsServers(JNIEnv *env, jclass c, jlong network_handle)
