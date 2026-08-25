@@ -26,13 +26,17 @@ import com.wireguard.android.configStore.FileConfigStore
 import com.wireguard.android.model.TunnelManager
 import com.wireguard.android.routing.RoutingListManager
 import com.wireguard.android.routing.RoutingListUpdateWorker
+import com.wireguard.android.routing.DnsPrivacySettings
+import com.wireguard.android.sharing.SharingController
 import com.wireguard.android.subscription.SubscriptionManager
 import com.wireguard.android.subscription.SubscriptionStore
 import com.wireguard.android.subscription.SubscriptionUpdateWorker
+import com.wireguard.android.turn.ConnectionStateMachine
 import com.wireguard.android.turn.TurnProxyManager
 import com.wireguard.android.turn.TurnSettingsStore
 import com.wireguard.android.updater.Updater
 import com.wireguard.android.util.RootShell
+import com.wireguard.android.util.PowerPolicySettings
 import com.wireguard.android.util.ToolsInstaller
 import com.wireguard.android.util.TurnUserAgentSettings
 import com.wireguard.android.util.UserKnobs
@@ -59,6 +63,7 @@ class Application : android.app.Application() {
     private lateinit var toolsInstaller: ToolsInstaller
     private lateinit var tunnelManager: TunnelManager
     private lateinit var turnProxyManager: TurnProxyManager
+    private val connectionStateMachine = ConnectionStateMachine()
     private lateinit var routingListManager: RoutingListManager
     private lateinit var subscriptionManager: SubscriptionManager
     private lateinit var subscriptionStore: SubscriptionStore
@@ -103,6 +108,9 @@ class Application : android.app.Application() {
         rootShell = RootShell(applicationContext)
         toolsInstaller = ToolsInstaller(applicationContext, rootShell)
         preferencesDataStore = PreferenceDataStoreFactory.create { applicationContext.preferencesDataStoreFile("settings") }
+        PowerPolicySettings.observe(preferencesDataStore, coroutineScope)
+        DnsPrivacySettings.observe(preferencesDataStore, coroutineScope)
+        SharingController.initialize(applicationContext, preferencesDataStore, coroutineScope)
         TurnUserAgentSettings.observe(preferencesDataStore, coroutineScope)
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             runBlocking {
@@ -127,26 +135,54 @@ class Application : android.app.Application() {
             FileConfigStore(applicationContext),
             TurnSettingsStore(applicationContext),
             subscriptionStore,
+            connectionStateMachine,
         )
         // Load wg-go library BEFORE creating TurnProxyManager to avoid UnsatisfiedLinkError
         com.wireguard.android.util.SharedLibraryLoader.loadSharedLibrary(applicationContext, "wg-go")
-        turnProxyManager = TurnProxyManager(applicationContext)
+        turnProxyManager = TurnProxyManager(applicationContext, connectionStateMachine)
+        GoBackend.setVpnServiceLifecycleCallback { reason ->
+            turnProxyManager.onVpnServiceTerminated(reason)
+            SharingController.onVpnStateChanged()
+        }
         subscriptionManager = SubscriptionManager(applicationContext, subscriptionStore)
         
         // Register captcha handler for TURN proxy (fallback when automatic solving fails)
         TurnBackend.setCaptchaHandler { redirectUri ->
             Log.d(TAG, "Captcha handler invoked, showing CaptchaActivity")
-            CaptchaActivity.solveCaptcha(applicationContext, redirectUri)
+            val previous = connectionStateMachine.state.value
+            val session = previous.tunnelName?.let {
+                ConnectionStateMachine.Session(previous.generation, it)
+            }
+            val stateWasCaptured = session != null && connectionStateMachine.transition(
+                session,
+                ConnectionStateMachine.Phase.CAPTCHA_REQUIRED,
+            )
+            CaptchaActivity.solveCaptcha(applicationContext, redirectUri).also { token ->
+                if (session != null && stateWasCaptured && connectionStateMachine.isCurrent(session)) {
+                    if (token.isNotEmpty()) {
+                        connectionStateMachine.transition(session, previous.phase)
+                    } else if (previous.phase in ConnectionStateMachine.CONNECTED_PHASES) {
+                        connectionStateMachine.transition(
+                            session,
+                            ConnectionStateMachine.Phase.DEGRADED,
+                            "Captcha was not completed",
+                        )
+                    }
+                }
+            }
         }
         
         tunnelManager.onCreate()
         // App and geodata maintenance start together. Missing geodata is still downloaded only
         // on the first ru-direct connection (or by explicit manual request).
-        RoutingListUpdateWorker.scheduleStartup(applicationContext)
-        if (routingListManager.hasData())
-            RoutingListUpdateWorker.schedulePeriodic(applicationContext)
         coroutineScope.launch(Dispatchers.IO) {
-            SubscriptionUpdateWorker.configureAtStartup(applicationContext)
+            val powerPolicy = PowerPolicySettings.load(preferencesDataStore)
+            RoutingListUpdateWorker.configureAtStartup(
+                applicationContext,
+                routingListManager.hasData(),
+                powerPolicy,
+            )
+            SubscriptionUpdateWorker.configureAtStartup(applicationContext, powerPolicy)
         }
         coroutineScope.launch(Dispatchers.IO) {
             try {
@@ -165,6 +201,7 @@ class Application : android.app.Application() {
     }
 
     override fun onTerminate() {
+        SharingController.onVpnStateChanged()
         coroutineScope.cancel()
         super.onTerminate()
     }
@@ -189,6 +226,8 @@ class Application : android.app.Application() {
         fun getTunnelManager() = get().tunnelManager
 
         fun getTurnProxyManager() = get().turnProxyManager
+
+        fun getConnectionStateMachine() = get().connectionStateMachine
 
         fun getRoutingListManager() = get().routingListManager
 

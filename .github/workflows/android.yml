@@ -36,6 +36,14 @@ jobs:
           go-version: '1.25.x'
           cache-dependency-path: tunnel/tools/libwg-go/go.sum
 
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --version 4.1.2 --locked
+
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
 

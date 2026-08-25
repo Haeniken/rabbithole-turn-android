@@ -17,6 +17,7 @@ import androidx.work.BackoffPolicy
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.wireguard.android.Application
+import com.wireguard.android.util.PowerPolicySettings
 import java.util.concurrent.TimeUnit
 
 class RoutingListUpdateWorker(
@@ -39,9 +40,31 @@ class RoutingListUpdateWorker(
         private const val PERIODIC_WORK = "routing-lists-periodic"
         private const val STARTUP_WORK = "routing-lists-startup"
 
-        fun scheduleStartup(context: Context) {
+        fun configureAtStartup(
+            context: Context,
+            hasData: Boolean,
+            powerPolicy: PowerPolicySettings.Snapshot = PowerPolicySettings.current(),
+        ) {
+            if (!powerPolicy.backgroundUpdatesEnabled) {
+                cancelAll(context)
+                return
+            }
+            scheduleStartup(context, powerPolicy)
+            if (hasData) schedulePeriodic(context, powerPolicy)
+            else WorkManager.getInstance(context).cancelUniqueWork(PERIODIC_WORK)
+        }
+
+        fun scheduleStartup(
+            context: Context,
+            powerPolicy: PowerPolicySettings.Snapshot = PowerPolicySettings.current(),
+        ) {
+            if (!powerPolicy.backgroundUpdatesEnabled) {
+                WorkManager.getInstance(context).cancelUniqueWork(STARTUP_WORK)
+                return
+            }
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
+                .setRequiresBatteryNotLow(powerPolicy.powerSavingEnabled)
                 .build()
             WorkManager.getInstance(context).enqueueUniqueWork(
                 STARTUP_WORK,
@@ -53,9 +76,17 @@ class RoutingListUpdateWorker(
             )
         }
 
-        fun schedulePeriodic(context: Context) {
+        fun schedulePeriodic(
+            context: Context,
+            powerPolicy: PowerPolicySettings.Snapshot = PowerPolicySettings.current(),
+        ) {
+            if (!powerPolicy.backgroundUpdatesEnabled) {
+                WorkManager.getInstance(context).cancelUniqueWork(PERIODIC_WORK)
+                return
+            }
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
+                .setRequiresBatteryNotLow(powerPolicy.powerSavingEnabled)
                 .build()
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 PERIODIC_WORK,
@@ -65,6 +96,13 @@ class RoutingListUpdateWorker(
                     .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.HOURS)
                     .build(),
             )
+        }
+
+        fun cancelAll(context: Context) {
+            WorkManager.getInstance(context).apply {
+                cancelUniqueWork(STARTUP_WORK)
+                cancelUniqueWork(PERIODIC_WORK)
+            }
         }
     }
 }

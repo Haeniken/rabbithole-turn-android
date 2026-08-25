@@ -4,3 +4,6 @@
 [submodule "tunnel/tools/elf-cleaner"]
 	path = tunnel/tools/elf-cleaner
 	url = https://github.com/termux/termux-elf-cleaner
+[submodule "external/VPNHotspot"]
+	path = external/VPNHotspot
+	url = https://github.com/WINGS-N/VPNHotspot.git

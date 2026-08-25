@@ -39,6 +39,10 @@ The project is developed as a separate application with package name `com.rabbit
 - managed direct routing for Russian networks and domains when explicitly requested by a profile;
 - automatic initial download and daily refresh of `geoip.dat` and `geosite.dat`;
 - profiles that require direct routing do not start if their geodata is absent or invalid;
+- AdGuard DNS (`94.140.14.14`, `94.140.15.15`), enabled by default and
+  controlled by a Routing checkbox;
+- sharing the active VPN over Wi-Fi, USB, Bluetooth, and Ethernet, with
+  transparent root routing or a local HTTP/SOCKS5 proxy without root;
 - connection latency checks;
 - grouped application, tunnel, TURN/CAPTCHA, subscription, and routing logs;
 - opt-in detailed diagnostics for queues, socket writes, packet loss and
@@ -77,9 +81,30 @@ Direct routing is enabled only for profiles whose downloaded configuration reque
 
 Geodata, profiles, subscriptions, and preferences are stored in the application's internal storage and are removed by Android when the application is uninstalled.
 
+## VPN sharing
+
+The VPN sharing page follows Routing in Settings. With root, the application
+uses the pinned VPNHotspot submodule, temporarily disables tethering hardware
+offload, and transparently routes downstream interfaces through the active VPN.
+It restores the previous offload setting and removes its deterministic firewall
+chains on stop. Downstream IPv6 is blocked, and TCP MSS is clamped to the VPN
+path MTU.
+
+Without root, an HTTP/SOCKS5 proxy accepts clients only from an active tethering
+subnet. The Windows 11 system proxy covers browsers, but not RDP or applications
+that ignore proxy settings. The application therefore includes a ready-to-use
+official sing-box TUN configuration for all traffic, with `strict_route`, MTU
+1280, and the phone address excluded to avoid a route loop. AdGuard UDP/53
+travels through SOCKS5 inside the VPN.
+
+See [info/VPN_SHARING.md](info/VPN_SHARING.md) for implementation details,
+limitations, and cleanup behavior.
+
 ## Building
 
-The build requires JDK 17, Go 1.25, Android SDK 36, and Android NDK 29.
+The build requires JDK 17, Go 1.25, Android SDK 36, Android NDK 29, stable Rust
+with the `aarch64-linux-android` and `armv7-linux-androideabi` targets, and
+`cargo-ndk` 4.1.2.
 
 ```bash
 git clone --recurse-submodules https://github.com/Haeniken/rabbithole-turn-android.git
@@ -131,5 +156,8 @@ Never commit a private signing key or its passwords.
 - [WireGuard for Android](https://git.zx2c4.com/wireguard-android) — the original official Android client and userspace backend;
 - [vk-turn-proxy](https://github.com/cacggghp/vk-turn-proxy) — the original TURN transport concept;
 - [lionheart](https://github.com/jaykaiperson/lionheart) — one source of inherited transport code, retained here for attribution.
+- [WINGSV](https://github.com/WINGS-N/WINGSV) and the pinned
+  [VPNHotspot](https://github.com/WINGS-N/VPNHotspot) submodule — the root
+  daemon and transparent VPN-sharing design.
 
 Licensing notices for inherited components remain in [COPYING](COPYING), their source files, and submodules.

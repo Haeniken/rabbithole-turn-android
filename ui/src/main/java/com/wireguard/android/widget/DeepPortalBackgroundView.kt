@@ -12,17 +12,20 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
+import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.View
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.LinearInterpolator
 import androidx.core.content.ContextCompat
 import com.wireguard.android.R
+import com.wireguard.android.util.MotionPolicyObserver
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -50,6 +53,19 @@ class DeepPortalBackgroundView @JvmOverloads constructor(
     private val activeBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val backgroundBounds = RectF()
     private val particlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val cloudShader = RadialGradient(
+        0f,
+        0f,
+        1f,
+        intArrayOf(0xFF9E63CE.toInt(), 0xC15B2F83.toInt(), 0x4F291443, Color.TRANSPARENT),
+        floatArrayOf(0f, 0.3f, 0.66f, 1f),
+        Shader.TileMode.CLAMP,
+    )
+    private val cloudPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        shader = cloudShader
+    }
+    private val cloudMatrix = Matrix()
     private val illuminationPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val depthIlluminationPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val lightningGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -90,6 +106,13 @@ class DeepPortalBackgroundView @JvmOverloads constructor(
     private var connecting = false
     private var activeProgress = 0f
     private var activeTarget = false
+    private var cloudTimeOffsetSeconds = 0f
+    private var cloudAnimationStartedAtNanos = 0L
+    private var motionAllowed = MotionPolicyObserver.allowsDecorativeMotion(context)
+    private val motionPolicyObserver = MotionPolicyObserver(context) { allowed ->
+        motionAllowed = allowed
+        updateMotionState()
+    }
 
     private val driftAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
         duration = 24_000L
@@ -101,7 +124,7 @@ class DeepPortalBackgroundView @JvmOverloads constructor(
         }
     }
     private val flashAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-        duration = 920L
+        duration = LIGHTNING_FLASH_DURATION_MS
         interpolator = LinearInterpolator()
         addUpdateListener {
             flashPhase = it.animatedValue as Float
@@ -125,6 +148,7 @@ class DeepPortalBackgroundView @JvmOverloads constructor(
         waitingForLightning = false
         if (!isAttachedToWindow || width <= 0 || height <= 0) return@Runnable
         generateLightning()
+        flashAnimator.duration = if (connecting) CONNECTING_LIGHTNING_FLASH_DURATION_MS else LIGHTNING_FLASH_DURATION_MS
         flashAnimator.start()
     }
 
@@ -135,7 +159,7 @@ class DeepPortalBackgroundView @JvmOverloads constructor(
     fun setConnecting(connecting: Boolean) {
         if (this.connecting == connecting) return
         this.connecting = connecting
-        if (!isAttachedToWindow) return
+        if (!isAttachedToWindow || !motionAllowed) return
         removeCallbacks(lightningRunnable)
         waitingForLightning = false
         if (!flashAnimator.isRunning) scheduleNextLightning(initial = true)
@@ -145,7 +169,7 @@ class DeepPortalBackgroundView @JvmOverloads constructor(
         if (activeTarget == active && activeAnimator.isRunning) return
         activeTarget = active
         val target = if (active) 1f else 0f
-        if (!isAttachedToWindow) {
+        if (!isAttachedToWindow || !motionAllowed) {
             activeAnimator.cancel()
             activeProgress = target
             invalidate()
@@ -191,8 +215,67 @@ class DeepPortalBackgroundView @JvmOverloads constructor(
         }
         canvas.restore()
 
+        drawClouds(canvas, cloudTimeSeconds())
         drawMotes(canvas, cycle)
         if (intensity > 0f) drawLightning(canvas, intensity)
+    }
+
+    private fun drawClouds(canvas: Canvas, timeSeconds: Float) {
+        for (index in CLOUD_X.indices) {
+            val localCycle = timeSeconds * TWO_PI * CLOUD_SPEED[index] / CLOUD_BASE_CYCLE_SECONDS + CLOUD_PHASE[index]
+            val direction = CLOUD_DIRECTION[index]
+            val orbitX = sin(localCycle) * direction * width * (0.040f + CLOUD_DEPTH[index] * 0.050f)
+            val orbitY = cos(localCycle * 0.79f + index * 0.43f) * height * (0.016f + CLOUD_DEPTH[index] * 0.020f)
+            val x = width * CLOUD_X[index] + orbitX
+            val y = height * CLOUD_Y[index] + orbitY
+            val breathe = 0.90f + 0.10f * sin(localCycle * 1.37f + 0.8f)
+            val radiusX = width * CLOUD_WIDTH[index] * breathe
+            val radiusY = height * CLOUD_HEIGHT[index] * (1.04f - (breathe - 0.88f) * 0.55f)
+            val angle = CLOUD_ANGLE[index] + sin(localCycle * 0.63f) * direction * 14f
+            val alpha = (42f + CLOUD_DEPTH[index] * 18f).toInt()
+
+            drawCloudLobe(canvas, x, y, radiusX, radiusY, angle, alpha)
+
+            val roll = localCycle * 1.43f + index * 0.61f
+            drawCloudLobe(
+                canvas,
+                x + cos(roll) * radiusX * 0.48f,
+                y + sin(roll) * radiusY * 0.72f,
+                radiusX * 0.68f,
+                radiusY * 0.82f,
+                angle - direction * 18f,
+                (alpha * 0.72f).toInt(),
+            )
+        }
+        cloudShader.setLocalMatrix(null)
+    }
+
+    private fun cloudTimeSeconds(): Float {
+        if (cloudAnimationStartedAtNanos == 0L) return cloudTimeOffsetSeconds
+        return cloudTimeOffsetSeconds +
+            (SystemClock.elapsedRealtimeNanos() - cloudAnimationStartedAtNanos) / 1_000_000_000f
+    }
+
+    private fun drawCloudLobe(
+        canvas: Canvas,
+        x: Float,
+        y: Float,
+        radiusX: Float,
+        radiusY: Float,
+        angle: Float,
+        alpha: Int,
+    ) {
+        cloudMatrix.reset()
+        cloudMatrix.setScale(radiusX, radiusY)
+        cloudMatrix.postRotate(angle)
+        cloudMatrix.postTranslate(x, y)
+        cloudShader.setLocalMatrix(cloudMatrix)
+        cloudPaint.alpha = alpha.coerceIn(0, 255)
+        // A rotated ellipse can extend beyond its unrotated square bounds. The
+        // extra transparent margin prevents a cloud edge from being clipped and
+        // then appearing again as the lobe turns.
+        val extent = max(radiusX, radiusY) * 1.5f
+        canvas.drawRect(x - extent, y - extent, x + extent, y + extent, cloudPaint)
     }
 
     private fun drawMotes(canvas: Canvas, cycle: Float) {
@@ -380,12 +463,12 @@ class DeepPortalBackgroundView @JvmOverloads constructor(
     }
 
     private fun scheduleNextLightning(initial: Boolean = false) {
-        if (!isAttachedToWindow || waitingForLightning) return
+        if (!isAttachedToWindow || !motionAllowed || windowVisibility != VISIBLE || waitingForLightning) return
         waitingForLightning = true
         val delay = if (initial) {
-            if (connecting) random.nextLong(420L, 1_250L) else random.nextLong(1_800L, 4_800L)
+            if (connecting) random.nextLong(210L, 625L) else random.nextLong(1_800L, 4_800L)
         } else if (connecting) {
-            random.nextLong(750L, 2_100L)
+            random.nextLong(375L, 1_050L)
         } else {
             random.nextLong(3_200L, 9_400L)
         }
@@ -394,12 +477,13 @@ class DeepPortalBackgroundView @JvmOverloads constructor(
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        if (!driftAnimator.isStarted) driftAnimator.start()
-        setPortalActive(activeTarget)
-        scheduleNextLightning(initial = true)
+        motionPolicyObserver.start()
+        updateMotionState()
     }
 
     override fun onDetachedFromWindow() {
+        motionPolicyObserver.stop()
+        pauseCloudClock()
         removeCallbacks(lightningRunnable)
         waitingForLightning = false
         driftAnimator.cancel()
@@ -409,14 +493,59 @@ class DeepPortalBackgroundView @JvmOverloads constructor(
         super.onDetachedFromWindow()
     }
 
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        updateMotionState()
+    }
+
+    private fun updateMotionState() {
+        val shouldAnimate = isAttachedToWindow && windowVisibility == VISIBLE && motionAllowed
+        if (shouldAnimate) {
+            if (cloudAnimationStartedAtNanos == 0L)
+                cloudAnimationStartedAtNanos = SystemClock.elapsedRealtimeNanos()
+            if (!driftAnimator.isStarted) driftAnimator.start()
+            setPortalActive(activeTarget)
+            if (!flashAnimator.isRunning) scheduleNextLightning(initial = true)
+            return
+        }
+
+        pauseCloudClock()
+        removeCallbacks(lightningRunnable)
+        waitingForLightning = false
+        driftAnimator.cancel()
+        flashAnimator.cancel()
+        activeAnimator.cancel()
+        flashPhase = 0f
+        activeProgress = if (activeTarget) 1f else 0f
+        invalidate()
+    }
+
+    private fun pauseCloudClock() {
+        if (cloudAnimationStartedAtNanos == 0L) return
+        cloudTimeOffsetSeconds = cloudTimeSeconds()
+        cloudAnimationStartedAtNanos = 0L
+    }
+
     private fun Random.nextFloat(from: Float, until: Float): Float = from + nextFloat() * abs(until - from)
 
     private companion object {
         const val TWO_PI = (PI * 2.0).toFloat()
         const val MAX_LIGHTNING_POINTS = 32
+        const val CLOUD_BASE_CYCLE_SECONDS = 24f
+        const val LIGHTNING_FLASH_DURATION_MS = 920L
+        const val CONNECTING_LIGHTNING_FLASH_DURATION_MS = 460L
         val MOTE_X = floatArrayOf(0.12f, 0.84f, 0.27f, 0.73f, 0.18f, 0.89f, 0.42f, 0.62f, 0.34f)
         val MOTE_Y = floatArrayOf(0.12f, 0.19f, 0.42f, 0.49f, 0.68f, 0.76f, 0.87f, 0.61f, 0.28f)
         val MOTE_SIZE = floatArrayOf(0.65f, 0.85f, 0.55f, 0.72f, 0.60f, 0.82f, 0.66f, 0.48f, 0.58f)
         val MOTE_PHASE = floatArrayOf(0.2f, 1.7f, 2.9f, 4.2f, 0.8f, 3.5f, 5.3f, 2.2f, 4.9f)
+        val CLOUD_X = floatArrayOf(0.28f, 0.69f, 0.38f, 0.61f, 0.24f, 0.76f, 0.43f, 0.57f)
+        val CLOUD_Y = floatArrayOf(0.43f, 0.48f, 0.57f, 0.63f, 0.70f, 0.76f, 0.84f, 0.90f)
+        val CLOUD_WIDTH = floatArrayOf(0.20f, 0.19f, 0.18f, 0.17f, 0.23f, 0.22f, 0.17f, 0.16f)
+        val CLOUD_HEIGHT = floatArrayOf(0.052f, 0.050f, 0.046f, 0.044f, 0.041f, 0.040f, 0.034f, 0.030f)
+        val CLOUD_DEPTH = floatArrayOf(0.35f, 0.40f, 0.50f, 0.55f, 0.68f, 0.72f, 0.84f, 0.92f)
+        val CLOUD_SPEED = floatArrayOf(1.02f, 0.88f, 1.17f, 0.96f, 1.34f, 1.12f, 1.48f, 1.26f)
+        val CLOUD_PHASE = floatArrayOf(0.1f, 2.7f, 1.3f, 4.4f, 2.1f, 5.2f, 3.5f, 0.9f)
+        val CLOUD_DIRECTION = floatArrayOf(1f, -1f, -1f, 1f, 1f, -1f, -1f, 1f)
+        val CLOUD_ANGLE = floatArrayOf(-14f, 12f, 9f, -11f, -7f, 8f, 5f, -6f)
     }
 }

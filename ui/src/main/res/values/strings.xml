@@ -142,6 +142,9 @@
     <string name="main_ready_hint">Follow the white rabbit!</string>
     <string name="main_toggle_tunnel">Connect or disconnect</string>
     <string name="main_cancel_connection">Cancel connection</string>
+    <string name="main_power_state_disconnected">Disconnected</string>
+    <string name="main_power_state_connecting">Connecting; tap again to cancel</string>
+    <string name="main_power_state_connected">Connected</string>
     <string name="main_connection_cancelled">Connection cancelled</string>
     <string name="main_connections">Connections</string>
     <string name="main_turn_profile">Portal</string>
@@ -351,9 +354,6 @@
     <string name="app_update_failed">Unable to check for updates: %s</string>
     <string name="app_update_dialog_title">Application update</string>
     <string name="app_update_dialog_message">Version %s is available on GitHub. Download and install the signed update?</string>
-    <string name="background_activity_title">Background activity</string>
-    <string name="background_activity_summary">The application has a background activity restriction. Please change the setting to unrestricted.</string>
-    <string name="background_activity_open_failed">Unable to open the background activity settings</string>
     <string name="subscription_settings_title">Subscriptions</string>
     <string name="subscription_settings_summary">Automatic updates, interval, request timeout and User-Agent</string>
     <string name="subscription_automatic_updates_title">Automatic subscription updates</string>
@@ -369,6 +369,9 @@
     <string name="subscription_user_agent_title">Subscription User-Agent</string>
     <string name="routing_settings_title">Routing</string>
     <string name="routing_settings_summary">Geodata, applications outside the tunnel and network exceptions</string>
+    <string name="adguard_dns_title">AdGuard DNS</string>
+    <string name="adguard_dns_summary_on">Block advertising with 94.140.14.14 and 94.140.15.15; DNS stays inside the tunnel</string>
+    <string name="adguard_dns_summary_off">Use the DNS servers from the connection profile</string>
     <string name="routing_excluded_routes_title">Excluded routes</string>
     <string name="routing_excluded_routes_summary">One IP address or CIDR per line; these destinations bypass the tunnel</string>
     <string name="routing_excluded_routes_default" translatable="false">10.0.0.0/8\n172.16.0.0/12\n192.168.0.0/16\n169.254.0.0/16\n224.0.0.0/4\n255.255.255.255/32</string>
@@ -392,11 +395,6 @@
     <string name="biometric_auth_error_reason">Authentication failure: %s</string>
     <string name="turn_title">TURN</string>
     <string name="turn_enable">Enable TURN proxy</string>
-    <string name="turn_mode">Mode</string>
-    <string-array name="turn_mode_options">
-        <item>@string/turn_mode_vk_link</item>
-        <item>@string/turn_mode_wb</item>
-    </string-array>
     <string name="turn_peer_type">Peer type</string>
     <string name="turn_peer_address">Peer address</string>
     <string-array name="turn_peer_type_options">
@@ -408,9 +406,8 @@
     <string name="turn_peer_type_proxy_v1">Proxy v1</string>
     <string name="turn_peer_type_wireguard">WireGuard</string>
     <string name="turn_server_mode">TURN server</string>
-    <string name="turn_mode_vk_link">VK Link</string>
-    <string name="turn_mode_wb">WB</string>
     <string name="turn_peer">Peer</string>
+    <string name="turn_options">Options</string>
     <string name="turn_peer_hint">IP:Port</string>
     <string name="turn_vk_link">VK Calls link</string>
     <string name="turn_vk_link_hint">https://vk.ru/call/join/...</string>
@@ -439,4 +436,45 @@
     <string name="captcha_notification_channel_description">Alerts when a connection requires manual verification</string>
     <string name="captcha_notification_title">Verification required</string>
     <string name="captcha_notification_text">Tap to complete CAPTCHA and continue connecting</string>
+    <string name="power_settings_title">Power and background</string>
+    <string name="power_settings_summary">Battery Saver and background activity</string>
+    <string name="background_updates_title">Background updates</string>
+    <string name="background_updates_summary_on">Update subscriptions and routing lists while the app is closed; the active VPN is not affected</string>
+    <string name="background_updates_summary_off">Automatic background updates are disabled; the active VPN keeps running</string>
+    <string name="power_saving_title">Save battery</string>
+    <string name="power_saving_summary_on">Disable decorative motion and postpone background updates while the battery is low</string>
+    <string name="power_saving_summary_off">Allow decorative motion and background updates at any battery level</string>
+    <string name="sharing_settings_title">Share VPN</string>
+    <string name="sharing_settings_summary">Wi-Fi hotspot, USB, Bluetooth and Ethernet</string>
+    <string name="sharing_status_title">Sharing status</string>
+    <string name="sharing_status_disabled">Sharing is disabled</string>
+    <string name="sharing_status_waiting_vpn">Waiting for an active VPN connection</string>
+    <string name="sharing_status_waiting_interface">Enable tethering in Android settings; no active downstream interface was found</string>
+    <string name="sharing_status_root">Transparent root sharing through VPN: %1$s</string>
+    <string name="sharing_status_proxy">Proxy sharing without root: %1$s, port %2$d</string>
+    <string name="sharing_status_error">Sharing error: %s</string>
+    <string name="sharing_wifi_title">Wi-Fi hotspot</string>
+    <string name="sharing_wifi_summary">Share the active VPN with Wi-Fi clients</string>
+    <string name="sharing_usb_title">USB tethering</string>
+    <string name="sharing_usb_summary">Share the active VPN over USB</string>
+    <string name="sharing_bluetooth_title">Bluetooth tethering</string>
+    <string name="sharing_bluetooth_summary">Share the active VPN over Bluetooth PAN</string>
+    <string name="sharing_ethernet_title">Ethernet tethering</string>
+    <string name="sharing_ethernet_summary">Share the active VPN over an Ethernet adapter</string>
+    <string name="sharing_proxy_port_title">HTTP/SOCKS5 proxy port</string>
+    <string name="sharing_proxy_port_summary">Without root, configure the connected device to use the phone gateway and this port</string>
+    <string name="sharing_proxy_port_invalid">Enter a port from 1024 to 65535</string>
+    <string name="sharing_system_settings_title">Android tethering settings</string>
+    <string name="sharing_system_settings_summary">Open the system page to enable the hotspot or USB/Bluetooth/Ethernet tethering</string>
+    <string name="sharing_windows_help_title">Windows 11 setup</string>
+    <string name="sharing_windows_help_summary">System proxy for browsers; sing-box TUN for all traffic and RDP</string>
+    <string name="sharing_windows_help_message">Without root, first enable tethering and connect the PC. Phone address: %1$s, proxy port: %2$d.\n\nBrowsers: Settings → Network &amp; internet → Proxy → Manual proxy; use this address and port. RDP does not use the system proxy.\n\nAll traffic and RDP: install the official sing-box package, save the configuration below as config.json, and run sing-box as Administrator. The TUN uses MTU 1280 and excludes the phone address from its route to avoid a loop. strict_route protects Windows from ordinary multihomed DNS leaks. AdGuard DNS uses UDP/53 through SOCKS5 inside the VPN. RDP falls back to TCP when UDP is unavailable.\n\n%3$s\n\nWith root, neither a proxy nor sing-box is needed: traffic is routed transparently and TCP MSS is clamped to the VPN path.</string>
+    <string name="sharing_windows_open_sing_box_short">Open website</string>
+    <string name="sharing_windows_copy_config">Copy config</string>
+    <string name="sharing_windows_config_label">sing-box configuration</string>
+    <string name="sharing_windows_config_copied">Configuration copied</string>
+    <string name="sharing_notification_channel">VPN sharing</string>
+    <string name="sharing_notification_title">VPN proxy sharing is active</string>
+    <string name="sharing_notification_text">HTTP and SOCKS5 proxy on port %d</string>
+    <string name="turn_server_hidden">••••••••</string>
 </resources>

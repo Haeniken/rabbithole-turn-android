@@ -16,6 +16,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.wireguard.android.Application
+import com.wireguard.android.util.PowerPolicySettings
 import java.util.concurrent.TimeUnit
 
 class SubscriptionUpdateWorker(
@@ -40,15 +41,18 @@ class SubscriptionUpdateWorker(
         private const val TAG = "RabbitHole/SubscriptionWorker"
         private const val PERIODIC_WORK = "subscriptions-periodic"
 
-        suspend fun configureAtStartup(context: Context) {
+        suspend fun configureAtStartup(
+            context: Context,
+            powerPolicy: PowerPolicySettings.Snapshot = PowerPolicySettings.current(),
+        ) {
             val settings = SubscriptionSettings.load(Application.getPreferencesDataStore())
-            schedulePeriodic(context, settings.automaticUpdates, settings.intervalHours)
-            if (settings.updateOnOpen) {
+            schedulePeriodic(context, settings.automaticUpdates, settings.intervalHours, powerPolicy)
+            if (powerPolicy.backgroundUpdatesEnabled && settings.updateOnOpen) {
                 WorkManager.getInstance(context).enqueueUniqueWork(
                     STARTUP_WORK,
                     ExistingWorkPolicy.REPLACE,
                     OneTimeWorkRequestBuilder<SubscriptionUpdateWorker>()
-                        .setConstraints(networkConstraints())
+                        .setConstraints(networkConstraints(powerPolicy))
                         .build(),
                 )
             } else {
@@ -56,9 +60,14 @@ class SubscriptionUpdateWorker(
             }
         }
 
-        fun schedulePeriodic(context: Context, enabled: Boolean, intervalHours: Int) {
+        fun schedulePeriodic(
+            context: Context,
+            enabled: Boolean,
+            intervalHours: Int,
+            powerPolicy: PowerPolicySettings.Snapshot = PowerPolicySettings.current(),
+        ) {
             val workManager = WorkManager.getInstance(context)
-            if (!enabled) {
+            if (!enabled || !powerPolicy.backgroundUpdatesEnabled) {
                 workManager.cancelUniqueWork(PERIODIC_WORK)
                 return
             }
@@ -70,14 +79,22 @@ class SubscriptionUpdateWorker(
                 PERIODIC_WORK,
                 ExistingPeriodicWorkPolicy.UPDATE,
                 PeriodicWorkRequestBuilder<SubscriptionUpdateWorker>(normalizedInterval.toLong(), TimeUnit.HOURS)
-                    .setConstraints(networkConstraints())
+                    .setConstraints(networkConstraints(powerPolicy))
                     .build(),
             )
         }
 
-        private fun networkConstraints(): Constraints {
+        fun cancelAll(context: Context) {
+            WorkManager.getInstance(context).apply {
+                cancelUniqueWork(STARTUP_WORK)
+                cancelUniqueWork(PERIODIC_WORK)
+            }
+        }
+
+        private fun networkConstraints(powerPolicy: PowerPolicySettings.Snapshot): Constraints {
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
+                .setRequiresBatteryNotLow(powerPolicy.powerSavingEnabled)
                 .build()
             return constraints
         }

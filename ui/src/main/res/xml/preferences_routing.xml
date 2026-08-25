@@ -8,6 +8,15 @@
         android:summary="@string/routing_lists_never_updated"
         android:title="@string/routing_lists_update" />
 
+    <CheckBoxPreference
+        android:defaultValue="true"
+        android:key="adguard_dns_enabled"
+        android:layout="@layout/rabbit_preference"
+        android:singleLineTitle="false"
+        android:summaryOff="@string/adguard_dns_summary_off"
+        android:summaryOn="@string/adguard_dns_summary_on"
+        android:title="@string/adguard_dns_title" />
+
     <Preference
         android:key="global_app_exclusions"
         android:layout="@layout/rabbit_preference"

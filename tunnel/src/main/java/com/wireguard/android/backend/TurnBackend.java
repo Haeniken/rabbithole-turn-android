@@ -23,6 +23,7 @@ public final class TurnBackend {
     public static final int WG_TURN_PROXY_ERROR_VK_LINK_EXPIRED = -9000;
 
     private static final AtomicReference<CompletableFuture<VpnService>> vpnServiceFutureRef = new AtomicReference<>(new CompletableFuture<>());
+    private static final AtomicReference<VpnService> currentVpnService = new AtomicReference<>();
 
     // Latch for synchronization: signals that JNI is registered and ready to protect sockets
     private static final AtomicReference<CountDownLatch> vpnServiceLatchRef = new AtomicReference<>(new CountDownLatch(1));
@@ -41,6 +42,7 @@ public final class TurnBackend {
         Log.d(TAG, "onVpnServiceCreated called with service=" + (service != null ? "non-null" : "null"));
 
         if (service != null) {
+            currentVpnService.set(service);
             // 1. First set in JNI so sockets can be protected
             Log.d(TAG, "Calling wgSetVpnService()...");
             wgSetVpnService(service);
@@ -51,18 +53,16 @@ public final class TurnBackend {
             Log.d(TAG, "vpnServiceLatchRef.countDown()");
 
             // 3. Then complete Future for Java code
-            CompletableFuture<VpnService> currentFuture = vpnServiceFutureRef.getAndSet(new CompletableFuture<>());
-            if (!currentFuture.isDone()) {
-                currentFuture.complete(service);
-                Log.d(TAG, "VpnService future completed");
-            } else {
-                // Old future already completed — complete the new one
-                CompletableFuture<VpnService> newFuture = vpnServiceFutureRef.get();
-                if (!newFuture.isDone()) {
-                    newFuture.complete(service);
-                    Log.d(TAG, "VpnService future completed (replacement)");
+            CompletableFuture<VpnService> currentFuture = vpnServiceFutureRef.get();
+            if (!currentFuture.complete(service)) {
+                final CompletableFuture<VpnService> replacement = CompletableFuture.completedFuture(service);
+                while (!vpnServiceFutureRef.compareAndSet(currentFuture, replacement)) {
+                    currentFuture = vpnServiceFutureRef.get();
+                    if (currentFuture.complete(service))
+                        break;
                 }
             }
+            Log.d(TAG, "VpnService future completed");
         } else {
             // Service destroyed - reset everything for next cycle
             Log.d(TAG, "VpnService destroyed, resetting future and latch");
@@ -70,6 +70,15 @@ public final class TurnBackend {
             vpnServiceFutureRef.set(new CompletableFuture<>());
             vpnServiceLatchRef.set(new CountDownLatch(1));  // Recreate latch for next launch
         }
+    }
+
+    /** Unregisters only the service instance that is actually being destroyed. */
+    public static void onVpnServiceDestroyed(VpnService service) {
+        if (!currentVpnService.compareAndSet(service, null)) {
+            Log.d(TAG, "Ignoring stale VpnService destruction callback");
+            return;
+        }
+        onVpnServiceCreated(null);
     }
 
     /**

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.preference.PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    android:key="power_settings">
+
+    <CheckBoxPreference
+        android:defaultValue="true"
+        android:key="power_background_updates_enabled"
+        android:layout="@layout/rabbit_preference"
+        android:singleLineTitle="false"
+        android:summaryOff="@string/background_updates_summary_off"
+        android:summaryOn="@string/background_updates_summary_on"
+        android:title="@string/background_updates_title" />
+
+    <CheckBoxPreference
+        android:defaultValue="false"
+        android:key="power_saving_enabled"
+        android:layout="@layout/rabbit_preference"
+        android:singleLineTitle="false"
+        android:summaryOff="@string/power_saving_summary_off"
+        android:summaryOn="@string/power_saving_summary_on"
+        android:title="@string/power_saving_title" />
+</androidx.preference.PreferenceScreen>

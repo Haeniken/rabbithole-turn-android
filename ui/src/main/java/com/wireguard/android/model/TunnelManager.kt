@@ -23,11 +23,15 @@ import com.wireguard.android.backend.GoBackend
 import com.wireguard.android.backend.Statistics
 import com.wireguard.android.backend.Tunnel
 import com.wireguard.android.configStore.ConfigStore
+import com.wireguard.android.configStore.FileConfigStore
 import com.wireguard.android.databinding.ObservableSortedKeyedArrayList
 import com.wireguard.android.routing.ManualRouteExclusions
+import com.wireguard.android.routing.DnsPrivacySettings
 import com.wireguard.android.routing.RoutingListUpdateWorker
 import com.wireguard.android.routing.RoutingPolicy
+import com.wireguard.android.sharing.SharingController
 import com.wireguard.android.turn.TurnConfigProcessor
+import com.wireguard.android.turn.ConnectionStateMachine
 import com.wireguard.android.turn.TurnProxyManager
 import com.wireguard.android.turn.TurnSettings
 import com.wireguard.android.turn.TurnSettingsStore
@@ -54,6 +58,7 @@ class TunnelManager(
     private val configStore: ConfigStore,
     private val turnSettingsStore: TurnSettingsStore,
     private val subscriptionStore: SubscriptionStore,
+    private val connectionStateMachine: ConnectionStateMachine,
 ) : BaseObservable() {
     private val tunnels = CompletableDeferred<ObservableSortedKeyedArrayList<String, ObservableTunnel>>()
     private val context: Context = get()
@@ -146,6 +151,11 @@ class TunnelManager(
     fun onCreate() {
         applicationScope.launch {
             try {
+                withContext(Dispatchers.IO) {
+                    (configStore as? FileConfigStore)?.migrateLegacyFiles()
+                    turnSettingsStore.migrateLegacyFiles()
+                    subscriptionStore.migrateLegacyFiles()
+                }
                 onTunnelsLoaded(
                     withContext(Dispatchers.IO) { configStore.enumerate() },
                     withContext(Dispatchers.IO) { getBackend().runningTunnelNames },
@@ -271,10 +281,25 @@ class TunnelManager(
     }
 
     suspend fun setTunnelState(tunnel: ObservableTunnel, state: Tunnel.State): Tunnel.State = withContext(Dispatchers.Main.immediate) {
-        if (state == tunnel.state) return@withContext state
+        val pendingConnection = connectionStateMachine.isBusy(tunnel.name)
+        val targetState = when (state) {
+            Tunnel.State.TOGGLE -> if (tunnel.state == Tunnel.State.UP || pendingConnection) Tunnel.State.DOWN else Tunnel.State.UP
+            else -> state
+        }
+        val requestedStart = targetState == Tunnel.State.UP
+        val requestedStop = targetState == Tunnel.State.DOWN
 
-        val requestedStart = state == Tunnel.State.UP ||
-            (state == Tunnel.State.TOGGLE && tunnel.state == Tunnel.State.DOWN)
+        if (targetState == tunnel.state && !(requestedStop && pendingConnection)) {
+            if (!requestedStart) return@withContext targetState
+            val runningNames = withContext(Dispatchers.IO) { getBackend().runningTunnelNames }
+            if (runningNames.contains(tunnel.name)) {
+                Log.d(TAG, "Skip redundant UP call for ${tunnel.name}, already running")
+                return@withContext targetState
+            }
+        }
+
+        val connectionSession = if (requestedStart) connectionStateMachine.begin(tunnel.name) else null
+        val stopSession = if (requestedStop) connectionStateMachine.beginStop(tunnel.name) else null
         val previouslyActive = if (requestedStart) {
             tunnelMap.filter { it !== tunnel && it.state == Tunnel.State.UP }
         } else {
@@ -286,50 +311,49 @@ class TunnelManager(
                 "Switching active tunnel from ${previouslyActive.joinToString { it.name }} to ${tunnel.name}",
             )
         }
-        
-        // If we are already UP and someone (like AlwaysOnCallback) requests UP again,
-        // double check with backend if it is really running.
-        if (state == Tunnel.State.UP && tunnel.state == Tunnel.State.UP) {
-            val runningNames = withContext(Dispatchers.IO) { getBackend().runningTunnelNames }
-            if (runningNames.contains(tunnel.name)) {
-                Log.d(TAG, "Skip redundant UP call for ${tunnel.name}, already running")
-                return@withContext state
-            }
-        }
 
         var newState = tunnel.state
         var throwable: Throwable? = null
+        var ownedGenerationAtFailure = true
+
+        fun requireCurrentGeneration() {
+            if (connectionSession != null && !connectionStateMachine.isCurrent(connectionSession))
+                throw CancellationException("Superseded connection generation ${connectionSession.generation}")
+        }
+
         try {
             val backend = getBackend()
+            requireCurrentGeneration()
             var configToUse = tunnel.getConfigAsync()
+            if (requestedStart) configToUse = DnsPrivacySettings.apply(configToUse)
+            requireCurrentGeneration()
             val turn = tunnel.turnSettings
-            val turnEnabled = turn != null && turn.enabled
+            val turnEnabled = turn?.enabled == true
             val routingPolicy = RoutingPolicy.fromConfig(configToUse)
-            
-            // Determine if TURN should be started before WireGuard activation.
-            // This happens when explicitly requesting UP, or TOGGLE from DOWN state
-            val shouldStartTurn = requestedStart
-            
-            // Stop TURN when tunnel goes DOWN
-            val shouldStopTurn = state == Tunnel.State.DOWN || (state == Tunnel.State.TOGGLE && tunnel.state == Tunnel.State.UP)
 
-            if (shouldStartTurn) subscriptionStore.requireEnabled(tunnel.name)
-            if (shouldStartTurn && backend is GoBackend) {
+            if (requestedStart) subscriptionStore.requireEnabled(tunnel.name)
+            requireCurrentGeneration()
+            if (requestedStart && backend is GoBackend) {
                 val globalExclusions = withContext(Dispatchers.IO) {
                     GlobalAppExclusions.load(Application.getPreferencesDataStore())
                 }
+                requireCurrentGeneration()
                 backend.setGloballyExcludedApplications(globalExclusions)
             }
 
-            suspend fun cleanupFailedTurnStartup(goBackend: GoBackend) {
+            suspend fun cleanupFailedTurnStartup(
+                goBackend: GoBackend,
+                session: ConnectionStateMachine.Session,
+            ) {
+                if (!connectionStateMachine.isCurrent(session)) return
                 withContext(Dispatchers.IO) {
-                    getTurnProxyManager().stopForTunnel(tunnel.name)
+                    getTurnProxyManager().stopForTunnel(tunnel.name, session)
                     goBackend.setExcludedRoutes(emptyList())
                     goBackend.stopVpnServiceIfIdle()
                 }
             }
 
-            if (shouldStartTurn) {
+            if (requestedStart) {
                 val goBackend = backend as? GoBackend
                 val manualRoutes = if (goBackend == null) {
                     emptyList()
@@ -338,12 +362,18 @@ class TunnelManager(
                         ManualRouteExclusions.load(Application.getPreferencesDataStore())
                     }
                 }
+                requireCurrentGeneration()
                 if (routingPolicy == RoutingPolicy.DIRECT_RUSSIA) {
                     if (goBackend == null)
                         throw IllegalStateException(context.getString(R.string.routing_requires_go_backend))
+                    connectionStateMachine.transition(
+                        connectionSession!!,
+                        ConnectionStateMachine.Phase.DOWNLOADING_GEO_DATA,
+                    )
                     val directRoutes = withContext(Dispatchers.IO) {
                         Application.getRoutingListManager().ensureDirectRoutes()
                     }
+                    requireCurrentGeneration()
                     val excludedRoutes = (manualRoutes + directRoutes).distinct()
                     Log.i(
                         ROUTING_TAG,
@@ -358,63 +388,87 @@ class TunnelManager(
                     )
                     goBackend?.setExcludedRoutes(manualRoutes)
                 }
-            } else if (shouldStopTurn) {
+                requireCurrentGeneration()
+            } else if (requestedStop) {
                 (backend as? GoBackend)?.setExcludedRoutes(emptyList())
             }
 
             if (turnEnabled) {
-                if (shouldStartTurn) {
+                if (requestedStart) {
                     tunnelMap
                         .filter { it !== tunnel && it.state == Tunnel.State.UP }
                         .forEach { activeTunnel -> setTunnelState(activeTunnel, Tunnel.State.DOWN) }
+                    requireCurrentGeneration()
                     configToUse = TurnConfigProcessor.modifyConfigForActiveTurn(configToUse, turn)
-                } else if (shouldStopTurn) {
+                } else if (requestedStop) {
                     withContext(Dispatchers.IO) {
                         getTurnProxyManager().stopForTunnel(tunnel.name)
                     }
                 }
             }
 
-            if (shouldStartTurn && turnEnabled) {
+            if (requestedStart && turnEnabled) {
+                val session = connectionSession!!
                 val goBackend = backend as? GoBackend
                     ?: throw IllegalStateException("TURN startup requires the Go backend")
 
+                connectionStateMachine.transition(session, ConnectionStateMachine.Phase.STARTING_VPN_SERVICE)
                 withContext(Dispatchers.IO) { goBackend.ensureVpnServiceReady() }
+                requireCurrentGeneration()
 
                 when (val turnResult = withContext(Dispatchers.IO) {
-                    getTurnProxyManager().onTunnelEstablished(tunnel.name, turn)
+                    getTurnProxyManager().onTunnelEstablished(session, turn)
                 }) {
                     TurnProxyManager.TurnStartResult.Success -> {
+                        requireCurrentGeneration()
                         try {
                             newState = withContext(Dispatchers.IO) {
-                                backend.setState(tunnel, state, configToUse)
+                                backend.setState(tunnel, targetState, configToUse)
                             }
+                            requireCurrentGeneration()
                         } catch (e: Throwable) {
-                            cleanupFailedTurnStartup(goBackend)
+                            cleanupFailedTurnStartup(goBackend, session)
                             throw e
                         }
                     }
                     TurnProxyManager.TurnStartResult.Cancelled -> {
-                        cleanupFailedTurnStartup(goBackend)
+                        cleanupFailedTurnStartup(goBackend, session)
                         throw CancellationException("TURN startup cancelled by user")
                     }
                     is TurnProxyManager.TurnStartResult.Failure -> {
-                        cleanupFailedTurnStartup(goBackend)
+                        cleanupFailedTurnStartup(goBackend, session)
                         throw IllegalStateException(turnResult.message)
                     }
                 }
             } else {
-                newState = withContext(Dispatchers.IO) { backend.setState(tunnel, state, configToUse) }
+                if (requestedStart)
+                    connectionStateMachine.transition(connectionSession!!, ConnectionStateMachine.Phase.CONNECTING_TUNNEL)
+                newState = withContext(Dispatchers.IO) { backend.setState(tunnel, targetState, configToUse) }
+                requireCurrentGeneration()
             }
 
             if (newState == Tunnel.State.UP) {
                 lastUsedTunnel = tunnel
+                connectionStateMachine.transition(connectionSession!!, ConnectionStateMachine.Phase.CONNECTED)
+            } else if (requestedStop && stopSession != null) {
+                connectionStateMachine.finishStop(stopSession)
             }
         } catch (e: Throwable) {
             throwable = e
+            ownedGenerationAtFailure = connectionSession?.let(connectionStateMachine::isCurrent) ?: true
+            if (connectionSession != null && ownedGenerationAtFailure)
+                connectionStateMachine.fail(connectionSession, e.message)
+            if (stopSession != null && connectionStateMachine.isCurrent(stopSession))
+                connectionStateMachine.fail(stopSession, e.message)
         }
         tunnel.onStateChanged(newState)
-        if (throwable != null && throwable !is CancellationException && previouslyActive.isNotEmpty()) {
+        SharingController.onVpnStateChanged()
+        if (
+            throwable != null &&
+            throwable !is CancellationException &&
+            ownedGenerationAtFailure &&
+            previouslyActive.isNotEmpty()
+        ) {
             Log.e(TAG, "Unable to activate ${tunnel.name}; restoring the previous tunnel", throwable)
             previouslyActive.forEach { previous ->
                 if (previous.state == Tunnel.State.UP) return@forEach

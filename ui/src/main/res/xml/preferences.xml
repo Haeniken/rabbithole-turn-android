@@ -17,11 +17,11 @@
         android:summary="@string/app_update_summary"
         android:title="@string/app_update_title" />
     <Preference
-        android:key="background_activity"
+        android:key="power_settings"
         android:layout="@layout/rabbit_preference"
         android:singleLineTitle="false"
-        android:summary="@string/background_activity_summary"
-        android:title="@string/background_activity_title" />
+        android:summary="@string/power_settings_summary"
+        android:title="@string/power_settings_title" />
     <Preference
         android:key="subscription_settings"
         android:layout="@layout/rabbit_preference"
@@ -34,6 +34,12 @@
         android:singleLineTitle="false"
         android:summary="@string/routing_settings_summary"
         android:title="@string/routing_settings_title" />
+    <Preference
+        android:key="sharing_settings"
+        android:layout="@layout/rabbit_preference"
+        android:singleLineTitle="false"
+        android:summary="@string/sharing_settings_summary"
+        android:title="@string/sharing_settings_title" />
     <Preference
         android:key="log_viewer"
         android:layout="@layout/rabbit_preference"

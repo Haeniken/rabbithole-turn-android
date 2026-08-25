@@ -14,7 +14,8 @@
     <color name="rabbit_outline_glass">#8F7959A7</color>
     <color name="rabbit_accent">#9145EB</color>
     <color name="rabbit_accent_soft">#D5A6FF</color>
-    <color name="rabbit_power_active">#C066FF</color>
+    <color name="rabbit_power_connecting">#C066FF</color>
+    <color name="rabbit_power_active">#FFB300</color>
     <color name="rabbit_success">#64F2C2</color>
     <color name="rabbit_main_status">#260B46</color>
     <color name="rabbit_main_navigation">#07050E</color>

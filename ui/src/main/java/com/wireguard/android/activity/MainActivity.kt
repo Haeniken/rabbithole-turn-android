@@ -79,6 +79,7 @@ class MainActivity : BaseActivity(), FragmentManager.OnBackStackChangedListener 
         backPressedCallback = onBackPressedDispatcher.addCallback(this) { handleBackPressed() }
         onBackStackChanged()
         requestNotificationPermissionOnce()
+        window.decorView.post { reportFullyDrawn() }
     }
 
     private fun requestNotificationPermissionOnce() {
