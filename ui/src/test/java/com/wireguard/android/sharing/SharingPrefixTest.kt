@@ -3,6 +3,7 @@
  */
 package com.wireguard.android.sharing
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -26,6 +27,12 @@ class SharingPrefixTest {
         assertTrue(SharingType.BLUETOOTH.matches("btnap0"))
         assertTrue(SharingType.ETHERNET.matches("eth0"))
         assertTrue(SharingType.ETHERNET.matches("usbeth0"))
+    }
+
+    @Test
+    fun singBoxRouteExclusionUsesAddressFamilyPrefix() {
+        assertEquals("192.168.43.1/32", SharingSettings.routeExcludeAddress("192.168.43.1"))
+        assertEquals("fd00::1/128", SharingSettings.routeExcludeAddress("fd00::1"))
     }
 
     @Test
