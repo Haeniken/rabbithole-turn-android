@@ -101,11 +101,14 @@ object HttpsFetcher {
         throw IOException("Unable to complete HTTPS request")
     }
 
-    private fun validateUrl(url: String): URI {
+    internal fun validateUrl(url: String): URI {
         val uri = try {
-            URI(url.trim())
-        } catch (e: Exception) {
-            throw IOException("Invalid HTTPS URL", e)
+            // Subscription links may carry a human-readable label with spaces after '#'.
+            // Fragments are not sent over HTTP; strip the label before strict URI parsing.
+            URI(url.trim().substringBefore('#'))
+        } catch (_: Exception) {
+            // URI syntax exceptions contain the full input, including subscription tokens.
+            throw IOException("Invalid HTTPS URL")
         }
         if (!uri.scheme.equals("https", ignoreCase = true) || uri.host.isNullOrBlank() || uri.userInfo != null)
             throw IOException("A valid HTTPS URL without embedded credentials is required")
