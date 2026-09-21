@@ -143,11 +143,13 @@
     <string name="subscription_empty_config">По подписке получена пустая конфигурация</string>
     <string name="subscription_bundle_already_added">Этот бандл подписки уже добавлен</string>
     <string name="subscription_bundle_name_invalid">В бандле отсутствует корректное общее название подписки</string>
-    <string name="subscription_bundle_profiles_changed">Сервер вернул другой состав профилей бандла. Добавьте подписку заново.</string>
     <string name="subscription_format_changed">Сервер вернул другой формат подписки</string>
     <string name="subscription_disabled_error">Подписка отключена провайдером. После повторного включения нажмите «Обновить подписку».</string>
     <string name="subscription_metadata_invalid">Данные подписки повреждены. Добавьте подписку заново перед подключением.</string>
     <string name="subscription_update">Обновить подписку</string>
+    <string name="delete_subscription_confirmation_title">Удалить подписку «%s»?</string>
+    <string name="delete_subscription_confirmation_message">Все серверы этой подписки будут удалены с устройства. Активное подключение из этой подписки будет отключено.</string>
+    <string name="subscription_deleted">Подписка удалена</string>
     <string name="subscription_checking">Проверяем подписку…</string>
     <string name="subscription_updating">Обновление подписки…</string>
     <string name="subscription_unchanged">Подписка актуальна · проверено серверов: %1$d</string>

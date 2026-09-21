@@ -119,7 +119,6 @@
     <string name="subscription_empty_config">The subscription returned an empty configuration</string>
     <string name="subscription_bundle_already_added">This subscription bundle has already been added</string>
     <string name="subscription_bundle_name_invalid">The bundle has no valid common subscription name</string>
-    <string name="subscription_bundle_profiles_changed">The server returned a different set of bundle profiles. Add the subscription again.</string>
     <string name="subscription_format_changed">The server returned a different subscription format</string>
     <string name="subscription_disabled_error">This subscription was disabled by the provider. Use “Update subscription” after it is enabled again.</string>
     <string name="subscription_metadata_invalid">Subscription data is damaged. Add the subscription again before connecting.</string>
@@ -131,6 +130,9 @@
     <string name="subscription_disabled">Subscription disabled by provider · stopped servers: %1$d</string>
     <string name="subscription_enabled">Subscription is active again · checked servers: %1$d</string>
     <string name="subscription_expires">Valid until %s</string>
+    <string name="delete_subscription_confirmation_title">Delete subscription “%s”?</string>
+    <string name="delete_subscription_confirmation_message">All servers in this subscription will be removed from this device. Any active connection from this subscription will be disconnected.</string>
+    <string name="subscription_deleted">Subscription deleted</string>
     <string name="main_secure_route">Private route</string>
     <string name="main_no_tunnel">No connection selected</string>
     <string name="main_choose_profile">Add or select a connection below</string>

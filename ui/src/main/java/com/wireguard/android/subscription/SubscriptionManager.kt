@@ -14,8 +14,10 @@ import com.wireguard.android.turn.TurnConfigProcessor
 import com.wireguard.android.turn.TurnSettings
 import com.wireguard.android.util.HttpsFetcher
 import com.wireguard.config.Config
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.net.URI
@@ -47,7 +49,7 @@ class SubscriptionManager(
     suspend fun add(url: String): UpdateResult.Added = operationMutex.withLock {
         Log.i(TAG, "Adding subscription")
         try {
-            val normalizedUrl = url.trim()
+            val normalizedUrl = HttpsFetcher.validateUrl(url).toString()
             val response = fetchSubscription(normalizedUrl, MAX_BUNDLE_BYTES)
             if (response.status != 200) throw IOException(context.getString(R.string.subscription_add_http_error, response.status))
             val result = if (SubscriptionBundle.isMediaType(response.contentType)) {
@@ -95,6 +97,24 @@ class SubscriptionManager(
 
     fun bundleSummary(tunnelName: String): SubscriptionStore.BundleSummary? = store.summaryForTunnel(tunnelName)
 
+    /** Serialize deletion with manual and background subscription updates. */
+    suspend fun deleteSubscription(bundleId: String): Int = operationMutex.withLock {
+        // Resolve the stable bundle ID after acquiring the lock: a refresh can replace all
+        // profiles while the confirmation dialog is open.
+        val records = store.recordsForBundle(bundleId)
+        if (records.isEmpty()) throw IllegalArgumentException(context.getString(R.string.subscription_not_found))
+        // Invalidate validators before deleting: a partial failure must be repairable by refresh.
+        records.forEach { store.save(it.copy(etag = null, lastModified = null)) }
+        for (record in records) {
+            val tunnel = Application.getTunnelManager().getTunnels()[record.tunnelName]
+            if (tunnel != null) {
+                disableTunnelIfRunning(tunnel.name)
+                tunnel.deleteAsync()
+            } else store.delete(record.tunnelName)
+        }
+        records.size
+    }
+
     private suspend fun addLegacy(url: String, response: HttpsFetcher.Response): UpdateResult.Added {
         val config = parseConfig(response.body)
         val tunnelManager = Application.getTunnelManager()
@@ -125,7 +145,9 @@ class SubscriptionManager(
         val parsedProfiles = parseBundleProfiles(bundle)
         val subscriptionName = commonSubscriptionName(parsedProfiles)
         val bundleId = sha256(url.toByteArray(StandardCharsets.UTF_8))
-        if (store.recordsForBundle(bundleId).isNotEmpty())
+        if (store.recordsForBundle(bundleId).isNotEmpty() || store.enumerate().any {
+                it.bundleId != null && it.url.trim().substringBefore('#') == url
+            })
             throw IOException(context.getString(R.string.subscription_bundle_already_added))
 
         val tunnelManager = Application.getTunnelManager()
@@ -183,7 +205,10 @@ class SubscriptionManager(
             Log.i(TAG, "Checking subscription $scope")
             val result = if (record.bundleId == null) updateLegacy(record) else updateBundle(record)
             Log.i(TAG, "Subscription check finished for $scope: ${result.logLabel()}")
-            UpdateReport(result, checkedProfiles)
+            val updatedProfiles = record.bundleId?.let { id ->
+                store.recordsForBundle(id).map { it.tunnelName }.sorted()
+            } ?: checkedProfiles
+            UpdateReport(result, updatedProfiles)
         } catch (e: Throwable) {
             Log.e(TAG, "Unable to update subscription for $tunnelName", e)
             throw e
@@ -266,42 +291,50 @@ class SubscriptionManager(
         val profiles = parseBundleProfiles(bundle)
         val subscriptionName = commonSubscriptionName(profiles)
         val recordByProfile = records.associateBy { it.profileId }
-        val profileIds = profiles.map { it.id }.toSet()
-        val storedProfileIds = recordByProfile.keys.filterNotNull().toSet()
-        if (recordByProfile.keys.any { it == null } || profileIds != storedProfileIds)
-            throw IOException(context.getString(R.string.subscription_bundle_profiles_changed))
+        if (records.any { it.profileId == null } || recordByProfile.size != records.size)
+            throw IOException(context.getString(R.string.subscription_metadata_invalid))
+        val changes = SubscriptionProfileChanges.between(records.map { it.profileId!! }, profiles.map { it.id })
+        val tunnelManager = Application.getTunnelManager()
 
         data class Previous(
-            val tunnel: ObservableTunnel,
+            val record: SubscriptionStore.Record,
             val config: Config,
             val turnSettings: TurnSettings?,
+            val state: Tunnel.State,
         )
         val changed = profiles.filter { profile ->
-            recordByProfile[profile.id]?.contentHash?.let { it != profile.contentHash } == true
+            profile.id in changes.retained && recordByProfile.getValue(profile.id).contentHash != profile.contentHash
         }
-        val previous = mutableListOf<Previous>()
+        // Snapshot before touching any profile, including those removed by the provider.
+        val previous = records.map { record ->
+            val tunnel = requireTunnel(record.tunnelName)
+            Previous(record, tunnel.getConfigAsync(), tunnel.getTurnSettingsAsync(), tunnel.state)
+        }
+        val created = mutableListOf<ObservableTunnel>()
+        val touched = mutableSetOf<String>()
         try {
+            // Force a full response if the process is interrupted part-way through reconciliation.
+            records.forEach { store.save(it.copy(etag = null, lastModified = null)) }
             for (profile in changed) {
                 val record = recordByProfile.getValue(profile.id)
                 val tunnel = requireTunnel(record.tunnelName)
-                previous += Previous(tunnel, tunnel.getConfigAsync(), tunnel.getTurnSettingsAsync())
-                Application.getTunnelManager().setTunnelConfig(tunnel, profile.config, profile.turnSettings)
+                touched += tunnel.name
+                tunnelManager.setTunnelConfig(tunnel, profile.config, profile.turnSettings)
             }
-        } catch (e: Throwable) {
-            previous.asReversed().forEach { old ->
-                try {
-                    Application.getTunnelManager().setTunnelConfig(old.tunnel, old.config, old.turnSettings)
-                } catch (rollbackError: Throwable) {
-                    Log.e(TAG, "Unable to roll back bundle profile ${old.tunnel.name}", rollbackError)
+            val nextRecords = profiles.map { profile ->
+                val existing = recordByProfile[profile.id]
+                val record = existing ?: run {
+                    val tunnel = tunnelManager.create(uniqueBundleName(profile.name), profile.config, profile.turnSettings)
+                    created += tunnel
+                    SubscriptionStore.Record(
+                        tunnelName = tunnel.name,
+                        url = target.url,
+                        bundleId = bundleId,
+                        profileId = profile.id,
+                        subscriptionName = subscriptionName,
+                        expiresAt = bundle.expiresAt,
+                    ).also(store::save)
                 }
-            }
-            throw e
-        }
-
-        val wasDisabled = records.any { !it.enabled }
-        for (profile in profiles) {
-            val record = recordByProfile[profile.id] ?: continue
-            store.save(
                 record.copy(
                     etag = response.etag,
                     lastModified = response.lastModified,
@@ -310,12 +343,48 @@ class SubscriptionManager(
                     lastCheckedAt = checkedAt,
                     subscriptionName = subscriptionName,
                     expiresAt = bundle.expiresAt,
-                ),
-            )
+                )
+            }
+            // Keep metadata for new profiles recoverable while obsolete tunnels are removed.
+            nextRecords.forEach { store.save(it.copy(etag = null, lastModified = null)) }
+            for (id in changes.removed) {
+                val record = recordByProfile.getValue(id)
+                touched += record.tunnelName
+                disableTunnelIfRunning(record.tunnelName)
+                requireTunnel(record.tunnelName).deleteAsync()
+            }
+            nextRecords.forEach(store::save)
+        } catch (e: Throwable) {
+            withContext(NonCancellable) {
+                created.asReversed().forEach { tunnel ->
+                    try {
+                        tunnel.deleteAsync()
+                    } catch (rollbackError: Throwable) {
+                        e.addSuppressed(rollbackError)
+                        Log.e(TAG, "Unable to roll back added profile ${tunnel.name}", rollbackError)
+                    }
+                }
+                previous.asReversed().forEach { old ->
+                    try {
+                        val name = old.record.tunnelName
+                        val tunnel = tunnelManager.getTunnels()[name] ?: tunnelManager.create(name, old.config, old.turnSettings)
+                        if (name in touched) tunnelManager.setTunnelConfig(tunnel, old.config, old.turnSettings)
+                        store.save(old.record.copy(etag = null, lastModified = null))
+                        if (old.state == Tunnel.State.UP && tunnel.state != Tunnel.State.UP)
+                            tunnel.setStateAsync(Tunnel.State.UP)
+                    } catch (rollbackError: Throwable) {
+                        e.addSuppressed(rollbackError)
+                        Log.e(TAG, "Unable to roll back bundle profile ${old.record.tunnelName}", rollbackError)
+                    }
+                }
+            }
+            throw e
         }
+
+        val wasDisabled = records.any { !it.enabled }
         return when {
             wasDisabled -> UpdateResult.Enabled
-            changed.isNotEmpty() -> UpdateResult.Updated
+            changed.isNotEmpty() || changes.membershipChanged -> UpdateResult.Updated
             else -> UpdateResult.Unchanged
         }
     }

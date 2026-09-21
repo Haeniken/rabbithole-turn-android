@@ -29,6 +29,7 @@ import androidx.databinding.ObservableList
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
 import com.google.zxing.qrcode.QRCodeReader
 import com.journeyapps.barcodescanner.ScanContract
@@ -217,6 +218,10 @@ class TunnelListFragment : BaseFragment() {
             }
             latencyCheck.setOnClickListener { checkLatency() }
             subscriptionRefresh.setOnClickListener { updateSubscriptionNow() }
+            subscriptionSummary.setOnLongClickListener {
+                confirmDeleteSubscription()
+                true
+            }
             createFab.setOnClickListener {
                 if (childFragmentManager.findFragmentByTag("BOTTOM_SHEET") != null)
                     return@setOnClickListener
@@ -479,6 +484,9 @@ class TunnelListFragment : BaseFragment() {
 
     private fun refreshActiveTunnelOnMainThread() {
         val next = observedTunnels.firstOrNull { it.state == Tunnel.State.UP }
+        if (heroTunnel !in observedTunnels) {
+            setHeroTunnel(next ?: observedTunnels.firstOrNull())
+        }
         if (activeTunnel !== next) {
             activeTunnel = next
             binding?.activeTunnel = next
@@ -612,6 +620,31 @@ class TunnelListFragment : BaseFragment() {
             binding.subscriptionSummaryExpiry.text = getString(R.string.subscription_expires, formattedExpiry)
             binding.subscriptionSummary.alpha = if (bundleSummary.enabled) 1f else 0.58f
         }
+    }
+
+    private fun confirmDeleteSubscription() {
+        val target = subscriptionTarget ?: return
+        val summary = Application.getSubscriptionManager().bundleSummary(target.name) ?: return
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(getString(R.string.delete_subscription_confirmation_title, summary.name))
+            .setMessage(R.string.delete_subscription_confirmation_message)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.delete) { _, _ ->
+                lifecycleScope.launch {
+                    try {
+                        Application.getSubscriptionManager().deleteSubscription(summary.bundleId)
+                        showSnackbar(getString(R.string.subscription_deleted))
+                    } catch (e: Throwable) {
+                        Log.e(TAG, "Unable to delete subscription", e)
+                        showSnackbar(ErrorMessages[e])
+                    } finally {
+                        val tunnels = Application.getTunnelManager().getTunnels()
+                        setHeroTunnel(heroTunnel?.takeIf { it in tunnels } ?: tunnels.firstOrNull())
+                        refreshSubscriptionTarget()
+                    }
+                }
+            }
+            .show()
     }
 
     private fun updateSubscriptionNow() {
