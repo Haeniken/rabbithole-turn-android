@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,10 +26,11 @@ type TurnCredentials struct {
 }
 
 const (
-	credentialLifetime = 10 * time.Minute
-	cacheSafetyMargin  = 60 * time.Second
-	maxCacheErrors     = 3
-	errorWindow        = 10 * time.Second
+	credentialLifetime     = 10 * time.Minute
+	cacheSafetyMargin      = 60 * time.Second
+	credentialExpiryBuffer = 30 * time.Minute
+	maxCacheErrors         = 3
+	errorWindow            = 10 * time.Second
 
 	// VK TURN currently accepts at most ten simultaneous allocations for one
 	// credential set and returns 486 Allocation Quota Reached for the rest.
@@ -40,6 +42,27 @@ const (
 	vkActiveAllocationsCooldown = 11 * time.Minute
 	activeAllocationsWindow     = 12 * time.Minute
 )
+
+// VK TURN REST usernames start with their actual Unix expiry. Unknown formats
+// retain the conservative in-memory fallback; they are never persisted.
+func parseCredentialExpiry(username string) (time.Time, bool) {
+	stamp, _, ok := strings.Cut(username, ":")
+	if !ok {
+		return time.Time{}, false
+	}
+	seconds, err := strconv.ParseInt(stamp, 10, 64)
+	if err != nil || seconds <= 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(seconds, 0), true
+}
+
+func credentialUsableUntil(username string, now time.Time) time.Time {
+	if expiry, ok := parseCredentialExpiry(username); ok {
+		return expiry.Add(-credentialExpiryBuffer)
+	}
+	return now.Add(credentialLifetime - cacheSafetyMargin)
+}
 
 func normalizeStreamsPerCred(requested int) int {
 	if requested < 1 {
@@ -62,11 +85,19 @@ type fetchFunc func(ctx context.Context, link string) (string, string, string, e
 // VK rate-limits credential minting. Fetches for different slots therefore
 // remain serialized, while acquisition from already-filled slots stays fully
 // concurrent.
-var fetchMu sync.Mutex
+var fetchPermit = make(chan struct{}, 1)
 
 func serializeFetch(ctx context.Context, link string, storeFn fetchFunc) (string, string, string, error) {
-	fetchMu.Lock()
-	defer fetchMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return "", "", "", err
+	}
+	select {
+	case fetchPermit <- struct{}{}:
+		defer func() { <-fetchPermit }()
+	case <-ctx.Done():
+		return "", "", "", ctx.Err()
+	}
+	// Cancellation and a free permit may become ready simultaneously.
 	if err := ctx.Err(); err != nil {
 		return "", "", "", err
 	}
@@ -84,8 +115,10 @@ type credentialPoolEntry struct {
 	cooldownUntil  time.Time
 	saturatedUntil time.Time
 
-	authErrors    int
-	lastAuthError time.Time
+	authErrors      int
+	lastAuthError   time.Time
+	validated       bool
+	transportErrors int
 }
 
 // credentialPool groups streams onto credential sets up to the real TURN
@@ -94,11 +127,14 @@ type credentialPoolEntry struct {
 type credentialPool struct {
 	mu sync.Mutex
 
-	link      string
-	perSlot   int
-	baseSlots int
-	entries   []credentialPoolEntry
-	fetch     fetchFunc
+	link       string
+	perSlot    int
+	baseSlots  int
+	entries    []credentialPoolEntry
+	fetch      fetchFunc
+	cache      credentialCacheBackend
+	cacheKey   string
+	cacheDirty bool
 }
 
 type credentialLease struct {
@@ -119,14 +155,61 @@ func (l *credentialLease) recordAuthError() bool {
 	if l == nil || l.pool == nil {
 		return false
 	}
-	return l.pool.recordAuthError(l.slot)
+	return l.pool.recordAuthError(l.slot, l.creds)
 }
 
 func (l *credentialLease) markSaturated() time.Duration {
 	if l == nil || l.pool == nil {
 		return 0
 	}
-	return l.pool.markSaturated(l.slot)
+	return l.pool.markSaturated(l.slot, l.creds)
+}
+
+func (l *credentialLease) markValidated() {
+	if l == nil || l.pool == nil {
+		return
+	}
+	p := l.pool
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.holdsLocked(l.slot, l.creds) {
+		return
+	}
+	firstValidation := !p.entries[l.slot].validated
+	p.entries[l.slot].validated = true
+	p.entries[l.slot].transportErrors = 0
+	if firstValidation || p.cacheDirty {
+		p.persistLocked()
+	}
+}
+
+// Long-lived credentials must not pin the pool to an unreachable first relay
+// for hours. Count failed TCP setup attempts, not optional UDP failures or
+// errors after Allocate (which may be caused by the downstream VPN server).
+func (l *credentialLease) recordTransportError() {
+	if l == nil || l.pool == nil {
+		return
+	}
+	p := l.pool
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.holdsLocked(l.slot, l.creds) {
+		return
+	}
+	e := &p.entries[l.slot]
+	e.transportErrors++
+	if e.transportErrors < 3 {
+		return
+	}
+	e.creds.ExpiresAt = time.Time{}
+	e.validated = false
+	e.cooldownUntil = time.Now().Add(credentialFetchCooldownMin)
+	p.persistLocked()
+	credentialLog("[Auth] Credential slot %d will refresh after repeated TURN TCP setup failures", l.slot)
+}
+
+func (p *credentialPool) holdsLocked(slot int, creds TurnCredentials) bool {
+	return slot >= 0 && slot < len(p.entries) && p.entries[slot].creds.Username == creds.Username && p.entries[slot].creds.Password == creds.Password
 }
 
 type credentialPoolUnavailableError struct {
@@ -280,7 +363,14 @@ func (p *credentialPool) acquire(ctx context.Context, streamID int) (*credential
 		now := time.Now()
 		p.mu.Lock()
 		if slot := p.pickFreshLocked(streamID, now); slot >= 0 {
+			wasIdle := p.entries[slot].active == 0
 			p.entries[slot].active++
+			p.entries[slot].lastUsedAt = now
+			// Restore only needs to know whether this identity could still
+			// occupy relay quota. Persist before its first new allocation.
+			if wasIdle || p.cacheDirty {
+				p.persistLocked()
+			}
 			creds := p.entries[slot].creds
 			active := p.entries[slot].active
 			p.mu.Unlock()
@@ -299,6 +389,10 @@ func (p *credentialPool) acquire(ctx context.Context, streamID int) (*credential
 
 		credentialLog("[Auth] Fetching fresh credentials for slot %d", target)
 		user, pass, addr, err := serializeFetch(ctx, p.link, p.fetch)
+		usableUntil := credentialUsableUntil(user, time.Now())
+		if err == nil && (user == "" || pass == "" || addr == "" || !time.Now().Before(usableUntil)) {
+			err = errors.New("new TURN credentials are incomplete or expire too soon")
+		}
 
 		p.mu.Lock()
 		entry := &p.entries[target]
@@ -323,10 +417,11 @@ func (p *credentialPool) acquire(ctx context.Context, streamID int) (*credential
 				Username:   user,
 				Password:   pass,
 				ServerAddr: addr,
-				ExpiresAt:  time.Now().Add(credentialLifetime - cacheSafetyMargin),
+				ExpiresAt:  usableUntil,
 				Link:       p.link,
 			},
 		}
+		p.persistLocked()
 		p.mu.Unlock()
 		credentialLog("[Auth] Credential slot %d filled; reserve-aware pool is ready", target)
 		// Loop through the common selection path so active accounting and
@@ -344,14 +439,17 @@ func (p *credentialPool) release(slot int) {
 		p.entries[slot].active--
 		if p.entries[slot].active == 0 {
 			p.entries[slot].lastUsedAt = time.Now()
+			p.persistLocked()
+		} else if p.cacheDirty {
+			p.persistLocked()
 		}
 	}
 }
 
-func (p *credentialPool) recordAuthError(slot int) bool {
+func (p *credentialPool) recordAuthError(slot int, creds TurnCredentials) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if slot < 0 || slot >= len(p.entries) {
+	if !p.holdsLocked(slot, creds) {
 		return false
 	}
 	e := &p.entries[slot]
@@ -361,15 +459,23 @@ func (p *credentialPool) recordAuthError(slot int) bool {
 	}
 	e.authErrors++
 	e.lastAuthError = now
-	credentialLog("[Auth] Slot %d authentication error (%d/%d)", slot, e.authErrors, maxCacheErrors)
-	if e.authErrors < maxCacheErrors {
+	limit := maxCacheErrors
+	if e.validated {
+		// A cached identity was accepted before. A real authenticated 401/403
+		// now means it must not survive another restart or a slow retry loop.
+		limit = 1
+	}
+	credentialLog("[Auth] Slot %d authentication error (%d/%d)", slot, e.authErrors, limit)
+	if e.authErrors < limit {
 		return false
 	}
 	// Existing allocations retain their copied credentials. New acquisitions
 	// stop using this entry and refill it as soon as active reaches zero.
 	e.creds.ExpiresAt = time.Time{}
+	e.validated = false
 	e.authErrors = 0
 	e.lastAuthError = time.Time{}
+	p.persistLocked()
 	credentialLog("[Auth] Slot %d invalidated after repeated authentication failures", slot)
 	return true
 }
@@ -387,17 +493,17 @@ func isAuthError(err error) bool {
 		return false
 	}
 	s := strings.ToLower(err.Error())
-	return strings.Contains(s, "401") ||
+	return strings.Contains(s, "error 401:") || strings.Contains(s, "error 403:") ||
 		strings.Contains(s, "unauthorized") ||
+		strings.Contains(s, "forbidden") ||
 		strings.Contains(s, "authentication") ||
-		strings.Contains(s, "invalid credential") ||
-		strings.Contains(s, "stale nonce")
+		strings.Contains(s, "invalid credential")
 }
 
-func (p *credentialPool) markSaturated(slot int) time.Duration {
+func (p *credentialPool) markSaturated(slot int, creds TurnCredentials) time.Duration {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if slot < 0 || slot >= len(p.entries) {
+	if !p.holdsLocked(slot, creds) {
 		return 0
 	}
 	e := &p.entries[slot]
@@ -411,6 +517,7 @@ func (p *credentialPool) markSaturated(slot int) time.Duration {
 	if until.After(e.saturatedUntil) {
 		e.saturatedUntil = until
 	}
+	p.persistLocked()
 	credentialLog("[Auth] Slot %d cooling down for %v after 486 (%s)", slot, cooldown, reason)
 	return cooldown
 }
@@ -429,6 +536,9 @@ func (p *credentialPool) markActiveForNetworkChange() int {
 			e.saturatedUntil = until
 		}
 		marked++
+	}
+	if marked > 0 || p.cacheDirty {
+		p.persistLocked()
 	}
 	return marked
 }
@@ -462,6 +572,7 @@ func getCredentialPool(key, link string, totalStreams, perSlot int, fetch fetchF
 		return existing
 	}
 	pool := newCredentialPool(link, totalStreams, perSlot, fetch)
+	pool.enableCache(key, defaultCredentialCache)
 	credentialPools.pools[key] = pool
 	return pool
 }

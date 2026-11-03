@@ -32,6 +32,8 @@ The project is developed as a separate application with package name `com.rabbit
 - TURN/UDP enabled by default with automatic fallback to compatible TURN/TCP;
 - optional WRAP payload protection;
 - TURN credential acquisition from a call link;
+- encrypted cross-run caching of verified TURN credentials, refreshed using
+  VK's actual expiry with a 30-minute safety margin;
 - automatic CAPTCHA handling with a persistent browser profile and a system
   notification for manual verification;
 - per-user configuration subscriptions, refreshed every 12 hours or manually;
@@ -102,7 +104,7 @@ limitations, and cleanup behavior.
 
 ## Building
 
-The build requires JDK 17, Go 1.25, Android SDK 36, Android NDK 29, stable Rust
+The build requires JDK 17, Go 1.27, Android SDK 36, Android NDK 29, stable Rust
 with the `aarch64-linux-android` and `armv7-linux-androideabi` targets, and
 `cargo-ndk` 4.1.2.
 

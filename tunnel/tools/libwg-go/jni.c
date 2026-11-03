@@ -46,6 +46,8 @@ static jmethodID inet_address_get_host_method;
 // Captcha handler
 static jclass turn_backend_class_global = NULL;
 static jmethodID on_captcha_required_method = NULL;
+static jmethodID read_credential_cache_method = NULL;
+static jmethodID write_credential_cache_method = NULL;
 
 
 // Helper to update the cached Network object
@@ -131,6 +133,8 @@ JNIEXPORT void JNICALL Java_com_wireguard_android_backend_TurnBackend_wgSetVpnSe
 			if (tb_class) {
 				turn_backend_class_global = (*env)->NewGlobalRef(env, tb_class);
 				on_captcha_required_method = (*env)->GetStaticMethodID(env, turn_backend_class_global, "onCaptchaRequired", "(Ljava/lang/String;)Ljava/lang/String;");
+				read_credential_cache_method = (*env)->GetStaticMethodID(env, turn_backend_class_global, "readCredentialCache", "(Ljava/lang/String;)Ljava/lang/String;");
+				write_credential_cache_method = (*env)->GetStaticMethodID(env, turn_backend_class_global, "writeCredentialCache", "(Ljava/lang/String;Ljava/lang/String;)Z");
 				(*env)->DeleteLocalRef(env, tb_class);
 			}
 		}
@@ -572,6 +576,67 @@ JNIEXPORT void JNICALL Java_com_wireguard_android_backend_TurnBackend_wgTurnProx
 // Called from Go to request captcha solving from Android UI.
 // Blocks until the user solves the captcha or timeout.
 // Returns a malloc'd string that the caller (Go) must free.
+// Cache callbacks run on arbitrary Go threads. Attach only for the duration
+// of the callback, bound local references, and never log cache contents.
+static JNIEnv* credential_cache_env(int *attached)
+{
+	JNIEnv *env = NULL;
+	*attached = 0;
+	if (!java_vm || !turn_backend_class_global) return NULL;
+	jint status = (*java_vm)->GetEnv(java_vm, (void **)&env, JNI_VERSION_1_6);
+	if (status == JNI_EDETACHED) {
+		if ((*java_vm)->AttachCurrentThread(java_vm, &env, NULL) != JNI_OK) return NULL;
+		*attached = 1;
+	} else if (status != JNI_OK) return NULL;
+	return env;
+}
+
+char* readCredentialCache(const char* key)
+{
+	int attached;
+	JNIEnv *env = credential_cache_env(&attached);
+	if (!env) return NULL;
+	char *result = NULL;
+	if (read_credential_cache_method && (*env)->PushLocalFrame(env, 4) == JNI_OK) {
+		jstring jkey = (*env)->NewStringUTF(env, key);
+		if (jkey) {
+			jstring value = (jstring)(*env)->CallStaticObjectMethod(env, turn_backend_class_global, read_credential_cache_method, jkey);
+			if (!(*env)->ExceptionCheck(env) && value) {
+				const char *text = (*env)->GetStringUTFChars(env, value, NULL);
+				if (text) {
+					result = strdup(text);
+					(*env)->ReleaseStringUTFChars(env, value, text);
+				}
+			}
+		}
+		if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+		(*env)->PopLocalFrame(env, NULL);
+	}
+	if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+	if (attached) (*java_vm)->DetachCurrentThread(java_vm);
+	return result;
+}
+
+int writeCredentialCache(const char* key, const char* value)
+{
+	int attached;
+	JNIEnv *env = credential_cache_env(&attached);
+	if (!env) return 0;
+	int result = 0;
+	if (write_credential_cache_method && (*env)->PushLocalFrame(env, 4) == JNI_OK) {
+		jstring jkey = (*env)->NewStringUTF(env, key);
+		jstring jvalue = jkey ? (*env)->NewStringUTF(env, value) : NULL;
+		if (jkey && jvalue) {
+			result = (*env)->CallStaticBooleanMethod(env, turn_backend_class_global, write_credential_cache_method, jkey, jvalue) == JNI_TRUE;
+		}
+		if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionClear(env); result = 0; }
+		(*env)->PopLocalFrame(env, NULL);
+	}
+	if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+	if (attached) (*java_vm)->DetachCurrentThread(java_vm);
+	return result;
+}
+
 const char* requestCaptcha(const char* redirect_uri)
 {
 	JNIEnv *env;

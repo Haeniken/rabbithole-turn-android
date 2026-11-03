@@ -249,7 +249,13 @@ func (s *stream) runTurnTransport(
 	okchan chan<- struct{},
 	peerType string,
 	useUDP bool,
-) error {
+) (attemptErr error) {
+	allocated := false
+	defer func() {
+		if attemptErr != nil && !allocated && !useUDP && ctx.Err() == nil && !isAuthError(attemptErr) && !isAllocationQuotaError(attemptErr) {
+			lease.recordTransportError()
+		}
+	}()
 	transportName := "TCP"
 	if useUDP {
 		transportName = "UDP"
@@ -336,6 +342,8 @@ func (s *stream) runTurnTransport(
 		return fmt.Errorf("TURN allocation failed: %w", err)
 	}
 	defer relayConn.Close()
+	allocated = true
+	lease.markValidated()
 	if useUDP {
 		turnUDPAllocationCount.Add(1)
 	}

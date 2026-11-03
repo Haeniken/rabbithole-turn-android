@@ -31,6 +31,39 @@ public final class TurnBackend {
     // Captcha handler: called when automatic captcha solving fails and WebView is needed
     private static volatile Function<String, String> captchaHandler;
 
+    public interface CredentialCache {
+        String read(String key) throws Exception;
+        void write(String key, String value) throws Exception;
+    }
+
+    private static volatile CredentialCache credentialCache;
+
+    public static void setCredentialCache(CredentialCache cache) {
+        credentialCache = cache;
+    }
+
+    // Invoked from Go through JNI, including from native worker threads.
+    public static String readCredentialCache(String key) {
+        CredentialCache cache = credentialCache;
+        if (cache == null) return "";
+        try {
+            return cache.read(key);
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    public static boolean writeCredentialCache(String key, String value) {
+        CredentialCache cache = credentialCache;
+        if (cache == null) return false;
+        try {
+            cache.write(key, value);
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     private TurnBackend() {
     }
 

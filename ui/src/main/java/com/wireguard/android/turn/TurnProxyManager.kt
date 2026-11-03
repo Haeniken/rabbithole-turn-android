@@ -52,6 +52,7 @@ class TurnProxyManager(
     @Volatile private var lastKnownNetwork: Network? = null
     
     init {
+        TurnBackend.setCredentialCache(TurnCredentialCache(context))
         networkMonitor.start()
         
         scope.launch {
