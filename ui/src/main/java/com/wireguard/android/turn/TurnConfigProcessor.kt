@@ -44,6 +44,8 @@ object TurnConfigProcessor {
                 val filteredLines = peer.extraLines.filter {
                     !it.startsWith("#@wgt:") &&
                         !it.startsWith("#@rhv:ProfileSubtitle", ignoreCase = true) &&
+                        !it.startsWith("#@rhv:ProfileName", ignoreCase = true) &&
+                        !it.startsWith("#@rhv:ProfileOrder", ignoreCase = true) &&
                         !it.contains("TURN extensions")
                 }
                 builder.addExtraLines(filteredLines)

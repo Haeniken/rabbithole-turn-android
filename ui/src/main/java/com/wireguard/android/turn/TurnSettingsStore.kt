@@ -66,6 +66,8 @@ class TurnSettingsStore(private val context: Context) {
                     useWrap = json.optBoolean("useWrap", false),
                     wrapKeyHex = json.optString("wrapKeyHex", ""),
                     profileSubtitle = json.optString("profileSubtitle", ""),
+                    profileName = json.optString("profileName", ""),
+                    profileOrder = json.optInt("profileOrder", 0),
                 )
                 secureStore.migrateIfNeeded(file, stored)
                 settings
@@ -100,6 +102,8 @@ class TurnSettingsStore(private val context: Context) {
             .put("useWrap", settings.useWrap)
             .put("wrapKeyHex", settings.wrapKeyHex)
             .put("profileSubtitle", settings.profileSubtitle)
+            .put("profileName", settings.profileName)
+            .put("profileOrder", settings.profileOrder)
 
         file.parentFile?.mkdirs()
         secureStore.write(file, json.toString().toByteArray(StandardCharsets.UTF_8))

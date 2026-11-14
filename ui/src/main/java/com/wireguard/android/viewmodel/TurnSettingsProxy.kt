@@ -105,6 +105,8 @@ class TurnSettingsProxy : BaseObservable, Parcelable {
         }
 
     private var profileSubtitle: String = ""
+    private var profileName: String = ""
+    private var profileOrder: Int = 0
 
     @get:Bindable
     var advancedExpanded: Boolean = false
@@ -128,6 +130,8 @@ class TurnSettingsProxy : BaseObservable, Parcelable {
         useWrap = parcel.readInt() != 0
         wrapKeyHex = parcel.readString() ?: ""
         profileSubtitle = parcel.readString() ?: ""
+        profileName = parcel.readString() ?: ""
+        profileOrder = parcel.readInt()
         advancedExpanded = parcel.readInt() != 0
     }
 
@@ -149,6 +153,8 @@ class TurnSettingsProxy : BaseObservable, Parcelable {
             useWrap = other.useWrap
             wrapKeyHex = other.wrapKeyHex
             profileSubtitle = other.profileSubtitle
+            profileName = other.profileName
+            profileOrder = other.profileOrder
         }
     }
 
@@ -169,6 +175,8 @@ class TurnSettingsProxy : BaseObservable, Parcelable {
         dest.writeInt(if (useWrap) 1 else 0)
         dest.writeString(wrapKeyHex)
         dest.writeString(profileSubtitle)
+        dest.writeString(profileName)
+        dest.writeInt(profileOrder)
         dest.writeInt(if (advancedExpanded) 1 else 0)
     }
 
@@ -232,6 +240,8 @@ class TurnSettingsProxy : BaseObservable, Parcelable {
             useWrap = useWrap,
             wrapKeyHex = wrapKeyHex.trim(),
             profileSubtitle = profileSubtitle,
+            profileName = profileName,
+            profileOrder = profileOrder,
         )
         if (enabled) {
             TurnSettings.validate(settings)

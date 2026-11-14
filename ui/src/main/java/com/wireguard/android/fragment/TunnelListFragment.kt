@@ -49,6 +49,7 @@ import com.wireguard.android.databinding.ObservableKeyedArrayList
 import com.wireguard.android.databinding.TunnelListFragmentBinding
 import com.wireguard.android.databinding.TunnelListItemBinding
 import com.wireguard.android.model.ObservableTunnel
+import com.wireguard.android.turn.TurnServerLatency
 import com.wireguard.android.subscription.SubscriptionManager
 import com.wireguard.android.turn.ConnectionStateMachine
 import com.wireguard.android.updater.SnackbarUpdateShower
@@ -83,6 +84,7 @@ class TunnelListFragment : BaseFragment() {
     private var heroTunnel: ObservableTunnel? = null
     private var activeTunnel: ObservableTunnel? = null
     private var subscriptionTarget: ObservableTunnel? = null
+    private val displayTunnels = ObservableKeyedArrayList<String, ObservableTunnel>()
     private var observedTunnelList: ObservableKeyedArrayList<String, ObservableTunnel>? = null
     private val observedTunnels = linkedSetOf<ObservableTunnel>()
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -96,7 +98,7 @@ class TunnelListFragment : BaseFragment() {
     }
     private val tunnelStateCallback = object : Observable.OnPropertyChangedCallback() {
         override fun onPropertyChanged(sender: Observable?, propertyId: Int) {
-            if (propertyId == BR.state || propertyId == 0) scheduleActiveTunnelRefresh()
+            if (propertyId == BR.state || propertyId == BR.turnSettings || propertyId == BR.name || propertyId == 0) scheduleActiveTunnelRefresh()
         }
     }
     private val tunnelListCallback = object :
@@ -307,7 +309,7 @@ class TunnelListFragment : BaseFragment() {
         binding!!.fragment = this
         lifecycleScope.launch {
             val tunnels = Application.getTunnelManager().getTunnels()
-            binding?.tunnels = tunnels
+            binding?.tunnels = displayTunnels
             attachTunnelList(tunnels)
             setHeroTunnel(selectedTunnel ?: Application.getTunnelManager().lastUsedTunnel ?: tunnels.firstOrNull())
         }
@@ -401,7 +403,7 @@ class TunnelListFragment : BaseFragment() {
             }
             showSnackbar(message)
             val tunnels = Application.getTunnelManager().getTunnels()
-            binding?.tunnels = tunnels
+            binding?.tunnels = displayTunnels
             setHeroTunnel(result.tunnels.firstOrNull())
         } catch (e: Throwable) {
             showSnackbar(ErrorMessages[e])
@@ -435,6 +437,15 @@ class TunnelListFragment : BaseFragment() {
     }
 
     private fun refreshTunnelRows() {
+        val sorted = observedTunnelList.orEmpty().sortedWith(compareBy<ObservableTunnel> {
+            it.turnSettings?.profileOrder?.takeIf { order -> order > 0 } ?: 0
+        }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.turnSettings?.profileName?.takeIf(String::isNotBlank) ?: it.name })
+        if (displayTunnels.toList() != sorted) {
+            actionMode?.finish()
+            displayTunnels.clear()
+            displayTunnels.addAll(sorted)
+        }
+
         val recyclerView = binding?.tunnelList ?: return
         updateVisibleTunnelRows(recyclerView)
         recyclerView.adapter?.notifyDataSetChanged()
@@ -472,6 +483,7 @@ class TunnelListFragment : BaseFragment() {
             tunnel.addOnPropertyChangedCallback(tunnelStateCallback)
             observedTunnels.add(tunnel)
         }
+        refreshTunnelRows()
         scheduleActiveTunnelRefresh()
     }
 
@@ -483,6 +495,7 @@ class TunnelListFragment : BaseFragment() {
     }
 
     private fun refreshActiveTunnelOnMainThread() {
+        refreshTunnelRows()
         val next = observedTunnels.firstOrNull { it.state == Tunnel.State.UP }
         if (heroTunnel !in observedTunnels) {
             setHeroTunnel(next ?: observedTunnels.firstOrNull())
@@ -686,9 +699,10 @@ class TunnelListFragment : BaseFragment() {
     }
 
     private fun checkLatency() {
-        val tunnel = activeTunnel
-        if (tunnel == null || tunnel.state != Tunnel.State.UP) {
-            showSnackbar(getString(R.string.latency_connect_first))
+        val connected = activeTunnel?.takeIf { it.state == Tunnel.State.UP }
+        val tunnel = connected ?: heroTunnel
+        if (tunnel == null) {
+            showSnackbar(getString(R.string.main_no_tunnel))
             return
         }
         val binding = binding ?: return
@@ -697,15 +711,19 @@ class TunnelListFragment : BaseFragment() {
         binding.latencyIcon.animate().rotationBy(360f).setDuration(600L).start()
         lifecycleScope.launch {
             try {
-                val latency = measureLatency()
-                Log.i(TAG, "Latency check through ${tunnel.name}: $latency ms")
-                binding.latencyResult.text = getString(R.string.latency_result, latency)
+                val latency = if (connected != null) measureLatency() else {
+                    val settings = tunnel.getTurnSettingsAsync() ?: throw IOException("No TURN endpoint")
+                    withContext(Dispatchers.IO) { TurnServerLatency.measure(settings, LATENCY_TIMEOUT_MS) }
+                }
+                if (this@TunnelListFragment.binding !== binding || activeTunnel !== connected) return@launch
+                Log.i(TAG, "Latency check ${if (connected != null) "through VPN to Google" else "to server TCP/443"} for ${tunnel.name}: $latency ms")
+                binding.latencyResult.text = getString(if (connected != null) R.string.latency_result else R.string.latency_server_result, latency)
                 binding.latencyResult.visibility = View.VISIBLE
             } catch (e: Throwable) {
                 Log.w(TAG, "Latency check failed", e)
-                showSnackbar(getString(R.string.latency_no_response))
+                showSnackbar(getString(if (connected != null) R.string.latency_no_response else R.string.latency_server_no_response))
             } finally {
-                binding.latencyCheck.isEnabled = true
+                if (this@TunnelListFragment.binding === binding) binding.latencyCheck.isEnabled = true
             }
         }
     }
@@ -763,7 +781,7 @@ class TunnelListFragment : BaseFragment() {
                     }
                     activity.lifecycleScope.launch {
                         try {
-                            val tunnels = Application.getTunnelManager().getTunnels()
+                            val tunnels = displayTunnels
                             val tunnelsToDelete = ArrayList<ObservableTunnel>()
                             for (position in copyCheckedItems) tunnelsToDelete.add(tunnels[position])
                             val futures = tunnelsToDelete.map { async(SupervisorJob()) { it.deleteAsync() } }
@@ -779,7 +797,7 @@ class TunnelListFragment : BaseFragment() {
 
                 R.id.menu_action_select_all -> {
                     lifecycleScope.launch {
-                        val tunnels = Application.getTunnelManager().getTunnels()
+                        val tunnels = displayTunnels
                         for (i in 0 until tunnels.size) {
                             setItemChecked(i, true)
                         }

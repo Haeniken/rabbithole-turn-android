@@ -371,7 +371,7 @@
     <string name="updater_download_progress">Загрузка обновления: %1$s / %2$s (%3$.2f%%)</string>
     <string name="updater_download_progress_nototal">Загрузка обновления: %s</string>
     <string name="updater_installing">Установка обновления…</string>
-    <string name="updater_failure">Ошибка обновления: %s. Повторите попытку…</string>
+    <string name="updater_failure">Ошибка обновления: %s. Загруженные данные сохранены.</string>
     <string name="updater_corrupt_title">Приложение повреждено</string>
     <string name="updater_corrupt_message">Приложение повреждено. Загрузите APK с сайта, указанного ниже, затем удалите это приложение и установите из загруженного APK.</string>
     <string name="updater_corrupt_navigate">Открыть сайт</string>
@@ -468,4 +468,7 @@
     <string name="sharing_notification_text">HTTP и SOCKS5-прокси на порту %d</string>
     <string name="turn_server_hidden">••••••••</string>
     <string name="turn_options">Параметры</string>
+    <string name="updater_download_retry">Соединение прервано. Сохранено %1$s; повтор %2$d/3…</string>
+    <string name="latency_server_result">%d мс · до сервера</string>
+    <string name="latency_server_no_response">Сервер не ответил на TCP/443. Это проверка доступности сервера без подключения VPN.</string>
 </resources>

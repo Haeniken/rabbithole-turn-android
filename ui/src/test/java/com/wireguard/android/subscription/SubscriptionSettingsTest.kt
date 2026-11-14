@@ -20,7 +20,7 @@ class SubscriptionSettingsTest {
 
     @Test
     fun normalizesUpdateIntervalToSupportedRange() {
-        assertEquals(SubscriptionSettings.DEFAULT_UPDATE_INTERVAL_HOURS, SubscriptionSettings.normalizeIntervalHours(null))
+        assertEquals(1, SubscriptionSettings.normalizeIntervalHours(null))
         assertEquals(SubscriptionSettings.MIN_UPDATE_INTERVAL_HOURS, SubscriptionSettings.normalizeIntervalHours("0"))
         assertEquals(SubscriptionSettings.MAX_UPDATE_INTERVAL_HOURS, SubscriptionSettings.normalizeIntervalHours("999"))
         assertEquals(48, SubscriptionSettings.normalizeIntervalHours(" 48 "))

@@ -24,6 +24,8 @@ data class TurnSettings(
     val useWrap: Boolean = false,
     val wrapKeyHex: String = "",
     val profileSubtitle: String = "",
+    val profileName: String = "",
+    val profileOrder: Int = 0,
 ) {
     fun toComments(): List<String> {
         val lines = mutableListOf(
@@ -48,8 +50,12 @@ data class TurnSettings(
         if (profileSubtitle.isNotBlank()) {
             lines.add("#@rhv:ProfileSubtitle = $profileSubtitle")
         }
+        if (profileName.isNotBlank()) lines.add("#@rhv:ProfileName = $profileName")
+        if (profileOrder > 0) lines.add("#@rhv:ProfileOrder = $profileOrder")
         return lines
     }
+
+    fun connectionSettings(): TurnSettings = copy(profileSubtitle = "", profileName = "", profileOrder = 0)
 
     companion object {
         fun fromComments(comments: List<String>): TurnSettings? {
@@ -67,10 +73,20 @@ data class TurnSettings(
             var useWrap = false
             var wrapKeyHex = ""
             var profileSubtitle = ""
+            var profileName = ""
+            var profileOrder = 0
             var noDtlsLegacy = false
             var foundAny = false
 
             for (line in comments) {
+                if (line.startsWith("#@rhv:ProfileName", ignoreCase = true)) {
+                    profileName = line.substringAfter('=', "").trim().filterNot { it.isISOControl() }.take(64)
+                    continue
+                }
+                if (line.startsWith("#@rhv:ProfileOrder", ignoreCase = true)) {
+                    profileOrder = line.substringAfter('=', "").trim().toIntOrNull()?.coerceIn(0, 1000) ?: 0
+                    continue
+                }
                 if (line.startsWith(PROFILE_SUBTITLE_PREFIX, ignoreCase = true)) {
                     profileSubtitle = line.substringAfter('=', "")
                         .trim()
@@ -124,6 +140,8 @@ data class TurnSettings(
                 useWrap = useWrap,
                 wrapKeyHex = wrapKeyHex,
                 profileSubtitle = profileSubtitle,
+                profileName = profileName,
+                profileOrder = profileOrder,
             ) else null
         }
 

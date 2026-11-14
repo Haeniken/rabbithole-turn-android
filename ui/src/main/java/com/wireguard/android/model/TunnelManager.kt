@@ -34,6 +34,7 @@ import com.wireguard.android.turn.TurnConfigProcessor
 import com.wireguard.android.turn.ConnectionStateMachine
 import com.wireguard.android.turn.TurnProxyManager
 import com.wireguard.android.turn.TurnSettings
+import com.wireguard.android.turn.TurnPresentation
 import com.wireguard.android.turn.TurnSettingsStore
 import com.wireguard.android.subscription.SubscriptionStore
 import com.wireguard.android.util.ErrorMessages
@@ -215,12 +216,15 @@ class TunnelManager(
         config: Config,
         turnSettings: TurnSettings? = null,
     ): Config = withContext(Dispatchers.Main.immediate) {
+        val previousConfig = tunnel.getConfigAsync()
+        val previousTurn = tunnel.getTurnSettingsAsync()
+        val configWithTurn = TurnConfigProcessor.injectTurnSettings(config, turnSettings)
+        val presentationOnly = TurnPresentation.onlyPresentationChanged(previousConfig, previousTurn, configWithTurn, turnSettings)
         val originalState = tunnel.state
-        if (originalState == Tunnel.State.UP) {
+        if (originalState == Tunnel.State.UP && !presentationOnly) {
             setTunnelState(tunnel, Tunnel.State.DOWN)
         }
         
-        val configWithTurn = TurnConfigProcessor.injectTurnSettings(config, turnSettings)
         val result = tunnel.onConfigChanged(
             withContext(Dispatchers.IO) {
                 configStore.save(tunnel.name, configWithTurn)
@@ -234,7 +238,7 @@ class TunnelManager(
                 }
             }
         
-        if (originalState == Tunnel.State.UP) {
+        if (originalState == Tunnel.State.UP && !presentationOnly) {
             setTunnelState(tunnel, Tunnel.State.UP)
         }
         
