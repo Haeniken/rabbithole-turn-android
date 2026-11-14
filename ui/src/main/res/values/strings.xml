@@ -344,7 +344,7 @@
     <string name="updater_download_progress">Downloading update: %1$s / %2$s (%3$.2f%%)</string>
     <string name="updater_download_progress_nototal">Downloading update: %s</string>
     <string name="updater_installing">Installing update…</string>
-    <string name="updater_failure">Update failure: %s. Will retry momentarily…</string>
+    <string name="updater_failure">Update failed: %s. Downloaded data is saved.</string>
     <string name="updater_corrupt_title">Application Corrupt</string>
     <string name="updater_corrupt_message">This application is corrupt. Please re-download the APK from the website linked below. After, uninstall this application, and reinstall it from the downloaded APK.</string>
     <string name="updater_corrupt_navigate">Open Website</string>
@@ -480,4 +480,7 @@
     <string name="sharing_notification_title">VPN proxy sharing is active</string>
     <string name="sharing_notification_text">HTTP and SOCKS5 proxy on port %d</string>
     <string name="turn_server_hidden">••••••••</string>
+    <string name="updater_download_retry">Connection interrupted. Saved %1$s; retry %2$d/3…</string>
+    <string name="latency_server_result">%d ms · to server</string>
+    <string name="latency_server_no_response">Server TCP/443 did not respond. This checks server reachability without starting the VPN.</string>
 </resources>

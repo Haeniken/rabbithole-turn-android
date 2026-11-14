@@ -59,7 +59,7 @@ object SubscriptionSettings {
     const val REQUEST_TIMEOUT_KEY_NAME = "subscription_request_timeout_seconds"
     const val USER_AGENT_KEY_NAME = "subscription_user_agent"
 
-    const val DEFAULT_UPDATE_INTERVAL_HOURS = 12
+    const val DEFAULT_UPDATE_INTERVAL_HOURS = 1
     const val MIN_UPDATE_INTERVAL_HOURS = 1
     const val MAX_UPDATE_INTERVAL_HOURS = 730
     const val DEFAULT_REQUEST_TIMEOUT_SECONDS = 10

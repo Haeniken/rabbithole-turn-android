@@ -33,11 +33,11 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.InvalidParameterException
-import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
@@ -54,6 +54,7 @@ object Updater {
     private val updaterScope = CoroutineScope(Job() + Dispatchers.IO)
     private val checkMutex = Mutex()
     private val monitorStarted = AtomicBoolean(false)
+    private val updating = AtomicBoolean(false)
     @Volatile private var availableUpdate: Update? = null
 
     private fun installer(context: Context): String = try {
@@ -83,6 +84,7 @@ object Updater {
 
         object Rechecking : Progress()
         class Downloading(val bytesDownloaded: ULong, val bytesTotal: ULong) : Progress()
+        class Retrying(val bytesDownloaded: Long, val attempt: Int) : Progress()
         object Installing : Progress()
         class NeedsUserIntervention(val intent: Intent, private val id: Int) : Progress() {
 
@@ -259,6 +261,10 @@ object Updater {
     }
 
     private suspend fun checkNowLocked(announce: Boolean): CheckResult {
+        if (updating.get() || mutableState.value is Progress.Installing || mutableState.value is Progress.NeedsUserIntervention) {
+            Log.i(TAG, "Update check skipped: download or installation in progress")
+            return availableUpdate?.let { CheckResult.UpdateAvailable(it.version.toString()) } ?: CheckResult.UpToDate
+        }
         if (announce) emitProgress(Progress.Rechecking, true)
         return try {
             val update = checkForUpdates()
@@ -288,100 +294,74 @@ object Updater {
             return@withContext
         }
 
-        emitProgress(Progress.Downloading(0UL, 0UL), true)
-        val connection = URL(update.downloadUrl).openConnection() as HttpURLConnection
-        connection.instanceFollowRedirects = true
-        connection.connectTimeout = 15_000
-        connection.readTimeout = 60_000
-        connection.setRequestProperty("User-Agent", Application.USER_AGENT)
-        try {
-            connection.connect()
-            if (connection.url.protocol != "https")
-                throw SecurityException("Update redirect must use HTTPS")
-            if (connection.responseCode != HttpURLConnection.HTTP_OK)
-                throw IOException("Update could not be fetched: ${connection.responseCode}")
-
-            var downloadedByteLen = 0UL
-            val totalByteLen = connection.contentLengthLong.takeIf { it > 0 }?.toULong() ?: 0UL
-            val fileBytes = ByteArray(1024 * 32 /* 32 KiB */)
-            val digest = MessageDigest.getInstance("SHA-256")
-            emitProgress(Progress.Downloading(downloadedByteLen, totalByteLen), true)
-
-            val installer = context.packageManager.packageInstaller
-            val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-                params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
-            params.setAppPackageName(context.packageName) /* Enforces updates; disallows new apps. */
-            val session = installer.openSession(installer.createSession(params))
-            var committed = false
+        val directory = File(context.noBackupFilesDir, "updater").apply { mkdirs() }
+        val hashName = update.hash.bytes.joinToString("") { "%02x".format(it) }
+        val partial = File(directory, "$hashName.apk.part")
+        directory.listFiles()?.filter { it != partial }?.forEach(File::delete)
+        val downloader = ResumableDownload(log = { Log.i(TAG, it) })
+        var attempt = 0
+        while (true) {
+            attempt++
             try {
-                session.openWrite(update.fileName, 0, -1).use { dest ->
-                    connection.inputStream.use { src ->
-                        while (true) {
-                            val readLen = src.read(fileBytes)
-                            if (readLen <= 0)
-                                break
-
-                            digest.update(fileBytes, 0, readLen)
-                            dest.write(fileBytes, 0, readLen)
-
-                            downloadedByteLen += readLen.toULong()
-                            emitProgress(Progress.Downloading(downloadedByteLen, totalByteLen), true)
-
-                            if (downloadedByteLen >= 1024UL * 1024UL * 100UL /* 100 MiB */)
-                                throw IOException("File too large")
-                        }
-                        session.fsync(dest)
-                    }
+                Log.i(TAG, "Downloading update version=${update.version}, attempt=$attempt, saved=${partial.length()}")
+                downloader.fetch(URL(update.downloadUrl), partial, update.hash.bytes) { downloaded, total ->
+                    mutableState.value = Progress.Downloading(downloaded.toULong(), total.toULong())
                 }
-
-                emitProgress(Progress.Installing)
-                if (!digest.digest().contentEquals(update.hash.bytes))
-                    throw SecurityException("Update has invalid hash")
-
-                val receiver = InstallReceiver()
-                val pendingIntent = withContext(Dispatchers.Main) {
-                    ContextCompat.registerReceiver(context, receiver, IntentFilter(receiver.sessionId), ContextCompat.RECEIVER_NOT_EXPORTED)
-                    PendingIntent.getBroadcast(
-                        context,
-                        0,
-                        Intent(receiver.sessionId).setPackage(context.packageName),
-                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-                    )
-                }
-                try {
-                    session.commit(pendingIntent.intentSender)
-                    committed = true
-                } catch (error: Throwable) {
-                    context.unregisterReceiver(receiver)
-                    throw error
-                }
-            } finally {
-                if (!committed)
-                    session.abandon()
-                session.close()
+                break
+            } catch (error: IOException) {
+                Log.w(TAG, "APK connection interrupted: saved=${partial.length()}, attempt=$attempt", error)
+                if (attempt >= 3) throw error
+                emitProgress(Progress.Retrying(partial.length(), attempt), true)
+                delay((attempt * 2).seconds)
+            }
+        }
+        emitProgress(Progress.Installing)
+        val installer = context.packageManager.packageInstaller
+        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+            params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+        params.setAppPackageName(context.packageName)
+        val session = installer.openSession(installer.createSession(params))
+        var committed = false
+        try {
+            session.openWrite(update.fileName, 0, partial.length()).use { dest ->
+                partial.inputStream().use { it.copyTo(dest) }
+                session.fsync(dest)
+            }
+            val receiver = InstallReceiver()
+            val pendingIntent = withContext(Dispatchers.Main) {
+                ContextCompat.registerReceiver(context, receiver, IntentFilter(receiver.sessionId), ContextCompat.RECEIVER_NOT_EXPORTED)
+                PendingIntent.getBroadcast(context, 0, Intent(receiver.sessionId).setPackage(context.packageName),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+            }
+            try {
+                Log.i(TAG, "Verified APK submitted to PackageInstaller: version=${update.version}, bytes=${partial.length()}")
+                session.commit(pendingIntent.intentSender)
+                committed = true
+            } catch (error: Throwable) {
+                context.unregisterReceiver(receiver)
+                throw error
             }
         } finally {
-            connection.disconnect()
+            if (!committed) session.abandon()
+            session.close()
         }
     }
 
-    private var updating = false
     fun installAvailableUpdate() {
         updaterScope.launch { downloadAndUpdateWrapErrors() }
     }
 
     private suspend fun downloadAndUpdateWrapErrors() {
-        if (updating)
-            return
-        updating = true
+        if (mutableState.value is Progress.Installing || mutableState.value is Progress.NeedsUserIntervention || !updating.compareAndSet(false, true)) return
         try {
-            downloadAndUpdate()
+            checkMutex.withLock { downloadAndUpdate() }
         } catch (e: Throwable) {
-            Log.e(TAG, "Update failure", e)
+            Log.e(TAG, "Update failure; partial APK retained for retry", e)
             emitProgress(Progress.Failure(e))
+        } finally {
+            updating.set(false)
         }
-        updating = false
     }
 
     private class InstallReceiver : BroadcastReceiver() {
@@ -391,7 +371,9 @@ object Updater {
             if (sessionId != intent.action)
                 return
 
-            when (val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE_INVALID)) {
+            val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE_INVALID)
+            Log.i(TAG, "PackageInstaller result: status=$status")
+            when (status) {
                 PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                     val id = intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, 0)
                     val userIntervention = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_INTENT, Intent::class.java)!!
@@ -401,6 +383,7 @@ object Updater {
                 }
 
                 PackageInstaller.STATUS_SUCCESS -> {
+                    File(context.noBackupFilesDir, "updater").deleteRecursively()
                     applicationScope.launch {
                         emitProgress(Progress.Complete)
                     }

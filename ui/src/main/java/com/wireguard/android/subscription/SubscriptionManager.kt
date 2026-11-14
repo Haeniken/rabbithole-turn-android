@@ -73,8 +73,12 @@ class SubscriptionManager(
      * Updates the subscription containing [tunnelName]. For a bundle, the selected tunnel is
      * only used to locate the subscription: every profile in that bundle is checked and applied.
      */
-    suspend fun updateSubscription(tunnelName: String): UpdateReport = operationMutex.withLock {
-        updateLocked(tunnelName)
+    suspend fun updateSubscription(tunnelName: String): UpdateReport {
+        val queuedAt = System.nanoTime()
+        return operationMutex.withLock {
+            Log.i(TAG, "Subscription update acquired lock after ${(System.nanoTime()-queuedAt)/1_000_000} ms")
+            updateLocked(tunnelName)
+        }
     }
 
     suspend fun updateAll(): Boolean = operationMutex.withLock {
@@ -295,6 +299,7 @@ class SubscriptionManager(
             throw IOException(context.getString(R.string.subscription_metadata_invalid))
         val changes = SubscriptionProfileChanges.between(records.map { it.profileId!! }, profiles.map { it.id })
         val tunnelManager = Application.getTunnelManager()
+        val applyStartedAt = System.nanoTime()
 
         data class Previous(
             val record: SubscriptionStore.Record,
@@ -381,6 +386,7 @@ class SubscriptionManager(
             throw e
         }
 
+        Log.i(TAG, "Subscription bundle applied: changed=${changed.size}, added=${changes.added.size}, removed=${changes.removed.size}, elapsed_ms=${(System.nanoTime()-applyStartedAt)/1_000_000}")
         val wasDisabled = records.any { !it.enabled }
         return when {
             wasDisabled -> UpdateResult.Enabled
@@ -402,6 +408,7 @@ class SubscriptionManager(
         etag: String? = null,
         lastModified: String? = null,
     ): HttpsFetcher.Response {
+        val startedAt = System.nanoTime()
         val settings = SubscriptionSettings.load(Application.getPreferencesDataStore())
         val timeoutMs = settings.requestTimeoutSeconds * 1_000
         return HttpsFetcher.get(
@@ -412,7 +419,7 @@ class SubscriptionManager(
             connectTimeoutMs = timeoutMs,
             readTimeoutMs = timeoutMs,
             userAgent = settings.userAgent,
-        )
+        ).also { Log.i(TAG, "Subscription HTTP ${it.status}: bytes=${it.body.size}, elapsed_ms=${(System.nanoTime()-startedAt)/1_000_000}") }
     }
 
     private fun parseBundleProfiles(bundle: SubscriptionBundle): List<ParsedProfile> = bundle.profiles.map { profile ->
